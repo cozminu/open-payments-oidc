@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: oidc
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: oidc
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U oidc -d oidc"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  oidc:
+    build: .
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: ${ENV_FILE:-.env}
+    environment:
+      # Built from POSTGRES_PASSWORD so the two can't drift apart. Overrides DATABASE_URL in .env.
+      DATABASE_URL: postgres://oidc:${POSTGRES_PASSWORD}@db:5432/oidc
+    ports:
+      - "${PORT:-3000}:${PORT:-3000}"
+    volumes:
+      - ${CONFIG_DIR:-./config}:/config:ro
+
+volumes:
+  pgdata:

@@ -1,0 +1,11 @@
+node_modules/
+*.key
+.env
+config/jwks.json
+config/clients.json
+spike/
+.superpowers/
+*.pem
+config/op-private-key*
+.env.*
+!.env.example
