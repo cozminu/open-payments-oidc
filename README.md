@@ -83,6 +83,7 @@ that file with `docker compose --env-file <file>` (or export those variables).
 | Field                        | Required                 | Meaning                                                                                                              |
 | ---------------------------- | ------------------------ | -------------------------------------------------------------------------------------------------------------------- |
 | `client_id`                  | yes                      | Unique id.                                                                                                           |
+| `client_name`                | no                       | Shown to users on the sign-in and logout pages. Default: the `client_id`.                                            |
 | `client_secret`              | for confidential clients | Used with `client_secret_basic` (default) or `client_secret_post`.                                                   |
 | `token_endpoint_auth_method` | no                       | `client_secret_basic` (default), `client_secret_post` or `none`. Use `none` for public clients, which must use PKCE. |
 | `redirect_uris`              | yes                      | Exact match only. https, or http for `localhost` and `127.0.0.1`.                                                    |

@@ -4,7 +4,7 @@ import type Provider from "oidc-provider";
 import type { InteractionResults } from "oidc-provider";
 import type { Logger } from "../log.ts";
 import type { CallbackParams, WalletVerifier } from "../wallet/verifier.ts";
-import { renderErrorPage, renderLoginPage } from "./views.ts";
+import { appNameOf, renderErrorPage, renderLoginPage, SECURITY_HEADERS } from "./views.ts";
 
 export type InteractionDeps = { provider: Provider; verifier: WalletVerifier; log: Logger };
 
@@ -36,7 +36,7 @@ export class InteractionHandlers {
       await this.refusePrompt(req, res, interaction);
       return;
     }
-    sendHtml(res, 200, renderLoginPage({ uid }));
+    sendHtml(res, 200, renderLoginPage({ uid, appName: await this.appName(interaction) }));
   }
 
   /** POST /interaction/:uid with form field `wallet_address`. */
@@ -60,7 +60,16 @@ export class InteractionHandlers {
         res.end();
         return;
       case "invalid_input":
-        sendHtml(res, 400, renderLoginPage({ uid, walletAddress, error: outcome.message }));
+        sendHtml(
+          res,
+          400,
+          renderLoginPage({
+            uid,
+            appName: await this.appName(interaction),
+            walletAddress,
+            error: outcome.message,
+          }),
+        );
         return;
       case "failed":
         await this.finish(req, res, { error: "server_error", error_description: outcome.reason });
@@ -128,6 +137,11 @@ export class InteractionHandlers {
     return interaction;
   }
 
+  private async appName(interaction: Interaction): Promise<string> {
+    const clientId = String(interaction.params.client_id);
+    return appNameOf(await this.provider.Client.find(clientId)) ?? clientId;
+  }
+
   // loadExistingGrant means only the login prompt should ever get here.
   private async refusePrompt(
     req: IncomingMessage,
@@ -187,14 +201,10 @@ function readBody(req: IncomingMessage, maxBytes: number): Promise<string | unde
 
 export function sendHtml(res: ServerResponse, status: number, html: string): void {
   res.writeHead(status, {
+    ...SECURITY_HEADERS,
     "content-type": "text/html; charset=utf-8",
     "content-length": Buffer.byteLength(html),
     "cache-control": "no-store",
-    "content-security-policy":
-      "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
-    "x-frame-options": "DENY",
-    "referrer-policy": "no-referrer",
-    "x-content-type-options": "nosniff",
   });
   res.end(html);
 }

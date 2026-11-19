@@ -1,6 +1,7 @@
 [
   {
     "client_id": "example-web-app",
+    "client_name": "Example web app",
     "client_secret": "replace-with-a-long-random-string",
     "redirect_uris": ["https://app.example.com/callback"],
     "post_logout_redirect_uris": ["https://app.example.com/"]

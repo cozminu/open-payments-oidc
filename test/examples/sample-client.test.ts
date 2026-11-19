@@ -80,7 +80,7 @@ async function signIn(
 ): Promise<Page> {
   const form = await browse(jar, `${origin}${path}`);
   assert.equal(form.status, 200);
-  assert.match(form.html, /Sign in with your wallet address/);
+  assert.match(form.html, /name="wallet_address"/);
   const submitted = await jar.fetch(form.url, {
     method: "POST",
     headers: { "content-type": "application/x-www-form-urlencoded" },
@@ -101,6 +101,8 @@ test("home page links to sign in", async (t) => {
   assert.equal(response.status, 200);
   assert.match(html, /href="\/login"/);
   assert.match(html, /href="\/login\?prompt=login"/);
+  assert.match(html, /Not signed in/);
+  assert.match(html, /client sample/);
 });
 
 test("full login shows verified claims and userinfo", async (t) => {
@@ -110,9 +112,15 @@ test("full login shows verified claims and userinfo", async (t) => {
   assert.equal(new URL(page.url).origin, origin);
   assert.match(page.html, /Signed in/);
   const wallet = app.fake.walletAddress;
-  assert.match(page.html, new RegExp(`&quot;sub&quot;: &quot;${wallet}&quot;`));
-  assert.match(page.html, new RegExp(`&quot;wallet_address&quot;: &quot;${wallet}&quot;`));
-  assert.match(page.html, /&quot;aud&quot;: &quot;sample&quot;/);
+  assert.match(page.html, new RegExp(`<th scope="row">sub</th><td>${wallet}</td>`));
+  assert.match(page.html, new RegExp(`<th scope="row">wallet_address</th><td>${wallet}</td>`));
+  assert.match(page.html, /<th scope="row">aud<\/th><td>sample<\/td>/);
+  assert.match(
+    page.html,
+    /<th scope="row">exp<\/th><td>\d+ <span class="muted">\d{4}-\d\d-\d\d \d\d:\d\d:\d\d UTC<\/span><\/td>/,
+  );
+  assert.match(page.html, /<details>\s*<summary>Raw ID token<\/summary>/);
+  assert.match(page.html, /Log out/);
   assert.match(page.html, /Userinfo/);
   assert.match(page.html, /&quot;alg&quot;: &quot;RS256&quot;/);
 });
@@ -135,7 +143,7 @@ test("logout ends the provider session and returns home", async (t) => {
   const jar = new CookieJar();
   await signIn(app, origin, "/login", jar);
   const home = await browse(jar, `${origin}/`);
-  assert.match(home.html, new RegExp(`Signed in as ${app.fake.walletAddress}`));
+  assert.match(home.html, new RegExp(`Signed in as <code>${app.fake.walletAddress}</code>`));
   assert.match(home.html, /href="\/logout"/);
 
   // The provider asks for confirmation; submit its form like a browser would.
@@ -183,6 +191,6 @@ test("callback with an unknown state is refused", async (t) => {
 test("unknown path is 404", async (t) => {
   const { origin } = await startSample(t);
   const response = await fetch(`${origin}/nope`);
-  await response.body?.cancel();
   assert.equal(response.status, 404);
+  assert.match(await response.text(), /Back to home/);
 });

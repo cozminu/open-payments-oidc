@@ -5,7 +5,13 @@ import type { Config } from "../config/env.ts";
 import type { ClientConfig } from "../config/clients.ts";
 import type { Db } from "../db/db.ts";
 import { createAdapterFactory } from "../db/oidc-adapter.ts";
-import { renderErrorPage } from "../http/views.ts";
+import {
+  appNameOf,
+  renderErrorPage,
+  renderLogoutPage,
+  renderSignedOutPage,
+  SECURITY_HEADERS,
+} from "../http/views.ts";
 import type { Logger } from "../log.ts";
 
 export type OidcProviderDeps = {
@@ -65,6 +71,7 @@ export function createOidcProvider({ config, clients, jwks, db, log }: OidcProvi
       return grant;
     },
     renderError: async (ctx, out) => {
+      setPageHeaders(ctx);
       ctx.type = "html";
       ctx.body = renderErrorPage(out.error_description ?? out.error);
     },
@@ -82,7 +89,20 @@ export function createOidcProvider({ config, clients, jwks, db, log }: OidcProvi
     },
     features: {
       devInteractions: { enabled: false },
-      rpInitiatedLogout: { enabled: true },
+      // Not reached when there's no session: oidc-provider then auto-submits with its own page.
+      rpInitiatedLogout: {
+        enabled: true,
+        logoutSource: async (ctx, form) => {
+          setPageHeaders(ctx);
+          ctx.type = "html";
+          ctx.body = renderLogoutPage({ form, appName: appNameOf(ctx.oidc.client) });
+        },
+        postLogoutSuccessSource: async (ctx) => {
+          setPageHeaders(ctx);
+          ctx.type = "html";
+          ctx.body = renderSignedOutPage({ appName: appNameOf(ctx.oidc.client) });
+        },
+      },
       userinfo: { enabled: true },
       revocation: { enabled: false },
       introspection: { enabled: false },
@@ -111,4 +131,9 @@ function logProviderErrors(provider: Provider, log: Logger): void {
   provider.on("authorization.error", (ctx, error) => {
     log.warn("oidc.authorization_error", { path: ctx.path, error: error.message });
   });
+}
+
+// For the pages oidc-provider renders through our templates.
+function setPageHeaders(ctx: { set(fields: Record<string, string>): void }): void {
+  ctx.set({ ...SECURITY_HEADERS, "cache-control": "no-store" });
 }

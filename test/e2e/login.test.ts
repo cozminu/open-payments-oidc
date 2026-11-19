@@ -8,7 +8,15 @@ import {
   FAKE_INTERACT_REF,
   FAKE_ISSUED_TOKEN,
 } from "../support/fake-open-payments.ts";
-import { CookieJar, follow, REDIRECT_URI, rsaKey, startTestApp } from "../support/test-app.ts";
+import {
+  CookieJar,
+  follow,
+  REDIRECT_URI,
+  rsaKey,
+  SPA_CLIENT,
+  startTestApp,
+  WEB_CLIENT,
+} from "../support/test-app.ts";
 
 const EXPIRED_COPY = "This login expired or was already used. Start again from the app.";
 
@@ -25,9 +33,30 @@ test("confidential client full login", async (t) => {
   assert.equal(typeof claims.auth_time, "number");
   assert.equal(claims.nonce, result.nonce);
   assert.equal("email" in claims, false);
-  assert.match(result.interaction?.html ?? "", /Sign in with your wallet address/);
+  assert.match(result.interaction?.html ?? "", /name="wallet_address"/);
   assert.equal(app.fake.grantRequests.length, 1);
   assert.equal(app.fake.continueRequests.length, 1);
+});
+
+test("sign-in page names the app, escaped, with security headers", async (t) => {
+  const app = await startTestApp(t, {
+    clients: [{ ...WEB_CLIENT, client_name: "Example <App>" }, SPA_CLIENT],
+  });
+  const result = await app.login();
+  assert.match(result.interaction?.html ?? "", /Sign in to <strong>Example &lt;App&gt;<\/strong>/);
+  const spa = await app.login({ client: "spa", jar: new CookieJar() });
+  assert.match(spa.interaction?.html ?? "", /Sign in to <strong>spa<\/strong>/);
+});
+
+test("oidc-provider error pages get our headers", async (t) => {
+  const app = await startTestApp(t);
+  const response = await fetch(`${app.url}/auth?client_id=nope&response_type=code&scope=openid`);
+  assert.equal(response.status, 400);
+  assert.equal(
+    response.headers.get("content-security-policy"),
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'",
+  );
+  assert.match(await response.text(), /Open Payments/);
 });
 
 test("id token carries only the expected claims", async (t) => {
@@ -113,7 +142,7 @@ test("invalid wallet address re-renders form", async (t) => {
   const [invalid, valid] = result.formResponses;
   assert.equal(invalid?.status, 400);
   assert.match(invalid?.html ?? "", /doesn&#39;t look like a wallet address/);
-  assert.match(invalid?.html ?? "", /Sign in with your wallet address/);
+  assert.match(invalid?.html ?? "", /name="wallet_address"/);
   assert.match(invalid?.html ?? "", /value="not a wallet &lt;b&gt;"/);
   assert.equal(valid?.status, 303);
   assert.equal(result.error, undefined);

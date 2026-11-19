@@ -2,6 +2,8 @@ import { readFileSync } from "node:fs";
 
 export type ClientConfig = {
   client_id: string;
+  /** Shown to users on the sign-in and logout pages. Default: the client_id. */
+  client_name?: string;
   client_secret?: string;
   redirect_uris: string[];
   post_logout_redirect_uris?: string[];
@@ -53,6 +55,13 @@ function parseClient(entry: unknown, index: number): ClientConfig {
   for (const uri of redirectUris) checkRedirectUri(uri, `${label} redirect_uris`);
 
   const client: ClientConfig = { client_id: clientId, redirect_uris: redirectUris };
+
+  if (raw.client_name !== undefined) {
+    if (typeof raw.client_name !== "string" || raw.client_name === "") {
+      throw new Error(`${label} client_name must be a non-empty string`);
+    }
+    client.client_name = raw.client_name;
+  }
 
   if (raw.post_logout_redirect_uris !== undefined) {
     const uris = stringArray(raw.post_logout_redirect_uris, `${label} post_logout_redirect_uris`);

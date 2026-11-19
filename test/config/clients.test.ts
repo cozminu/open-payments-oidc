@@ -36,6 +36,41 @@ describe("loadClients", () => {
     assert.equal(clients[1]?.client_secret, undefined);
   });
 
+  test("reads an optional client_name", () => {
+    const clients = loadClients(
+      write([
+        {
+          client_id: "a",
+          client_secret: "x",
+          redirect_uris: ["https://a.example/cb"],
+          client_name: "App A",
+        },
+        { client_id: "b", client_secret: "x", redirect_uris: ["https://b.example/cb"] },
+      ]),
+    );
+    assert.equal(clients[0]?.client_name, "App A");
+    assert.equal("client_name" in (clients[1] ?? {}), false);
+  });
+
+  test("rejects an empty or non-string client_name", () => {
+    for (const client_name of ["", 42]) {
+      assert.throws(
+        () =>
+          loadClients(
+            write([
+              {
+                client_id: "a",
+                client_secret: "x",
+                redirect_uris: ["https://a.example/cb"],
+                client_name,
+              },
+            ]),
+          ),
+        /Client "a" client_name must be a non-empty string/,
+      );
+    }
+  });
+
   test("rejects missing redirect_uris", () => {
     assert.throws(
       () => loadClients(write([{ client_id: "a", client_secret: "x" }])),
