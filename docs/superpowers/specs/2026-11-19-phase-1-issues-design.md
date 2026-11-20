@@ -15,8 +15,8 @@ Labels: enhancement
 ## Why
 
 Users type a wallet address and the provider fetches it, so the provider makes requests to hosts
-a stranger picked. `assertPublicHost` (`src/wallet/address.ts`) resolves the host and refuses
-non-public addresses before the SDK fetches, but the SDK's fetch does its own DNS lookup a moment
+a stranger picked. `OutboundPolicy.resolveWalletAddress` (`src/wallet/outbound.ts`) resolves the
+host and refuses non-public addresses before the SDK fetches, but the SDK's fetch does its own DNS lookup a moment
 later. A name that answers with a public IP for the check and a private one for the fetch (DNS
 rebinding) gets through. The only check that holds is one made where the connection is opened.
 
@@ -41,29 +41,28 @@ until then.
 - Don't replace `globalThis.fetch` with undici's `fetch`. ky passes a built-in `Request` object to
   fetch, and `undici.fetch(<built-in Request>)` throws "Failed to parse URL". If you ever need
   undici's fetch, `undici.install()` swaps `Request`, `Response` and `Headers` along with it.
-- New module `src/wallet/outbound.ts`:
-  - `createOutboundDispatcher(opts)` returns an undici `Agent`. Options: `filterAddresses: boolean`
-    and `lookup` (injectable for tests, defaults to `dns.lookup`). #2 and #3 add more options and
-    compose interceptors onto this same dispatcher, so keep it easy to extend
-    (`agent.compose(...)`).
-  - When `filterAddresses` is true:
+- Add a `createDispatcher()` method to `OutboundPolicy` (`src/wallet/outbound.ts`, see
+  `GLOSSARY.md`). It returns an undici `Agent`. Don't add a separate module or a
+  `filterAddresses` option: the policy already knows `allowHttp`, and it's the one place that
+  decides what that flag relaxes. #2 and #3 compose interceptors onto this same dispatcher, so
+  keep it easy to extend (`agent.compose(...)`).
+  - Unless `allowHttp`:
     - Give the connector a `lookup` that resolves with `all: true` and fails the connection if
-      any resolved address is non-public. This is the same rule as `assertPublicHost`: refuse if
-      any address is bad, not just the first.
+      any resolved address is non-public. Use the `isNonPublic` already in `outbound.ts`, so both
+      checks share one list and the same rule: refuse if any address is bad, not just the first.
+    - The connector needs a callback-style lookup; the policy's `lookup` option is
+      `dns.promises.lookup`-shaped. Adapt it, so a test injects one stub for both checks.
     - Node's `net.connect` doesn't call `lookup` when the host is already an IP literal, so a
       lookup filter alone misses `https://10.0.0.5/`. Wrap the connector
       (`buildConnector(...)`) so it checks IP-literal hostnames before connecting.
     - Use a clear error message, for example `refused connection to non-public address`.
-  - `installOutboundDispatcher(opts)` calls `setGlobalDispatcher(createOutboundDispatcher(opts))`.
-- Move the IP ranges and `isNonPublic` out of `address.ts` (or export them) so both checks use one
-  list.
-- In `src/main.ts`, install the dispatcher before `createAuthenticatedClient`, with
-  `filterAddresses: !config.allowHttp`. Install it unconditionally, so #2 and #3 apply with
-  `ALLOW_HTTP=true` too. Only the address filter is off in that mode, the same as
-  `assertPublicHost` today. Keep the previous global dispatcher. Restore it in `close()`, and in
-  the startup-failure path too.
-- Keep `assertPublicHost` in the verifier. It still gives users the friendlier "couldn't reach
-  that wallet address" message before any request goes out. The dispatcher is what actually
+- In `src/main.ts`, `setGlobalDispatcher(outbound.createDispatcher())` before
+  `createAuthenticatedClient`. The policy creates, `main.ts` installs: process-global state stays
+  with the process owner. Install it unconditionally, so #2 and #3 apply with `ALLOW_HTTP=true`
+  too. Only the address filter is off in that mode, the same as the pre-check today. Keep the
+  previous global dispatcher. Restore it in `close()`, and in the startup-failure path too.
+- Keep the pre-check in `resolveWalletAddress`. It still gives users the friendlier "couldn't
+  reach that wallet address" message before any request goes out. The dispatcher is what actually
   enforces the rule.
 
 Behavior change to document: requests to allowlisted auth servers go through the filter too. An
@@ -76,7 +75,7 @@ Open Payments calls today.
 ## Tests
 
 The global dispatcher is process-wide. `node --test` runs each test file in its own process, so
-any test that calls `installOutboundDispatcher` should live in its own file, and should restore
+any test that calls `setGlobalDispatcher` should live in its own file, and should restore
 the previous dispatcher (`getGlobalDispatcher()`) in `after()`. For everything else, pass the
 dispatcher per request: `fetch(url, { dispatcher })`. Don't install it in `test/support/test-app.ts`.
 The `CookieJar` there uses global fetch against the provider and expects 303s, which #2 would
@@ -84,11 +83,12 @@ refuse.
 
 - The filtering lookup: public addresses pass; any non-public address in the result fails,
   including when it's mixed in with public ones; IPv4-mapped IPv6 fails.
-- Rebinding: an injected `lookup` resolves `wallet.test` to `127.0.0.1`, and the fake Open Payments
-  server listens there. With `filterAddresses: true`, a fetch through the dispatcher is refused
-  even though a pre-check stubbed to pass said the host was fine.
-- An IP literal (`http://127.0.0.1:<port>/`) is refused with `filterAddresses: true` and allowed
-  with `false`.
+- Rebinding: an injected `lookup` resolves `wallet.test` to a public address on its first call and
+  to `127.0.0.1` after that, and the fake Open Payments server listens there. With
+  `allowHttp: false`, `resolveWalletAddress` allows the host, and the fetch through the dispatcher
+  that follows is refused.
+- An IP literal (`http://127.0.0.1:<port>/`) is refused by a dispatcher from a policy with
+  `allowHttp: false` and allowed with `true`.
 - Through the SDK, in its own file: install the dispatcher, call `walletAddress.get()` on a fake
   whose host resolves to loopback, and expect it to reject. The fake is in
   `test/support/fake-open-payments.ts`.
@@ -214,9 +214,12 @@ Two more things make this harder than it looks. A probe during review confirmed 
   already get. The user then waits at most `OUTBOUND_TIMEOUT_MS` per step, whatever ky does with
   retries. A retry ky starts in the background after we give up still has its per-attempt
   deadline, so it can't run forever. That's ugly but acceptable until the SDK takes a signal.
-  Pass the timeout into `WalletVerifierOptions`.
-- Pass the values into `installOutboundDispatcher` from `main.ts`. They're on with
-  `ALLOW_HTTP=true` as well.
+  Pass the timeout into `WalletVerifierOptions`. This is transport handling, not login protocol:
+  if the SDK calls have moved behind their own module by the time you pick this up, put the
+  helper there instead of in the verifier.
+- Pass the values to `OutboundPolicy` as constructor options (`timeoutMs`, `maxResponseBytes`)
+  from `main.ts`, and have `createDispatcher()` use them. They're on with `ALLOW_HTTP=true` as
+  well.
 - Check that an abort mid-body surfaces through the SDK as a rejected call. The `clone().text()`
   in the logger hook should reject, ky should cancel the response, and the verifier should map it
   to its existing outcomes. Nothing should hang or leak an unhandled rejection.
