@@ -83,6 +83,19 @@ describe("loadConfig", () => {
     }
   });
 
+  test("rejects http allowlist entries unless ALLOW_HTTP", () => {
+    assert.throws(
+      () => loadConfig({ ...minimal, AUTH_SERVER_ALLOWLIST: "https://a.example,http://b.example" }),
+      /AUTH_SERVER_ALLOWLIST entry "http:\/\/b.example" must be https unless ALLOW_HTTP=true/,
+    );
+    const config = loadConfig({
+      ...minimal,
+      AUTH_SERVER_ALLOWLIST: "http://b.example",
+      ALLOW_HTTP: "true",
+    });
+    assert.deepEqual(config.authServerAllowlist, ["http://b.example"]);
+  });
+
   test("rejects non-numeric PORT", () => {
     assert.throws(() => loadConfig({ ...minimal, PORT: "abc" }), /PORT/);
   });

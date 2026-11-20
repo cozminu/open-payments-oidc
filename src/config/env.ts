@@ -77,11 +77,12 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
   if (cookieKeys.length === 0) errors.push("COOKIE_KEYS is required (comma-separated)");
 
   const sessionTtlSeconds = integer("SESSION_TTL_SECONDS", 3600, 1, 31_536_000);
+  const allowHttp = boolean("ALLOW_HTTP", false);
   const authServerAllowlist = parseAllowlist(
     env.AUTH_SERVER_ALLOWLIST ?? DEFAULT_ALLOWLIST,
+    allowHttp,
     errors,
   );
-  const allowHttp = boolean("ALLOW_HTTP", false);
   const trustProxy = boolean("TRUST_PROXY", true);
   const rateLimitPerMinute = integer("RATE_LIMIT_PER_MINUTE", 20, 1, 1_000_000);
   const outboundTimeoutMs = integer("OUTBOUND_TIMEOUT_MS", 5000, 1, 600_000);
@@ -128,8 +129,9 @@ function parseIssuer(raw: string, errors: string[]): string {
 }
 
 // There is deliberately no "allow any" escape hatch: "*" and an empty list are errors.
-// An explicitly set but blank value fails rather than silently using the default.
-function parseAllowlist(raw: string, errors: string[]): string[] {
+// An explicitly set but blank value fails rather than silently using the default. An http origin
+// without ALLOW_HTTP would never be allowed anyway, so it's a mistake worth failing on at startup.
+function parseAllowlist(raw: string, allowHttp: boolean, errors: string[]): string[] {
   const entries = raw
     .split(",")
     .map((item) => item.trim())
@@ -151,6 +153,10 @@ function parseAllowlist(raw: string, errors: string[]): string[] {
     }
     if (url.protocol !== "https:" && url.protocol !== "http:") {
       errors.push(`AUTH_SERVER_ALLOWLIST entry ${JSON.stringify(entry)} must be http(s)`);
+    } else if (url.protocol === "http:" && !allowHttp) {
+      errors.push(
+        `AUTH_SERVER_ALLOWLIST entry ${JSON.stringify(entry)} must be https unless ALLOW_HTTP=true`,
+      );
     } else if (
       url.pathname !== "/" ||
       url.search !== "" ||
