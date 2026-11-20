@@ -7,8 +7,8 @@ import {
 import { randomBytes } from "node:crypto";
 import type { PendingLoginRepo } from "../db/pending-logins.ts";
 import type { Logger } from "../log.ts";
-import { AuthServerAllowlist, assertPublicHost, toWalletAddressUrl } from "./address.ts";
 import { LoginHash } from "./hash.ts";
+import type { OutboundPolicy } from "./outbound.ts";
 
 export type StartOutcome =
   | { kind: "redirect"; redirectUrl: string }
@@ -25,9 +25,7 @@ export type CallbackParams = { interactRef?: string; hash?: string; result?: str
 export type WalletVerifierOptions = {
   client: AuthenticatedClient;
   pendingLogins: PendingLoginRepo;
-  allowlist: AuthServerAllowlist;
-  allowHttp: boolean;
-  checkHost?: (url: string) => Promise<void>;
+  outbound: OutboundPolicy;
   createNonce?: () => string;
   log: Logger;
 };
@@ -39,19 +37,14 @@ const INTERNAL = "Something went wrong. Please try again.";
 export class WalletVerifier {
   private readonly client: AuthenticatedClient;
   private readonly pendingLogins: PendingLoginRepo;
-  private readonly allowlist: AuthServerAllowlist;
-  private readonly allowHttp: boolean;
-  private readonly checkHost: (url: string) => Promise<void>;
+  private readonly outbound: OutboundPolicy;
   private readonly createNonce: () => string;
   private readonly log: Logger;
 
   constructor(opts: WalletVerifierOptions) {
     this.client = opts.client;
     this.pendingLogins = opts.pendingLogins;
-    this.allowlist = opts.allowlist;
-    this.allowHttp = opts.allowHttp;
-    this.checkHost =
-      opts.checkHost ?? (opts.allowHttp ? async () => {} : (url) => assertPublicHost(url));
+    this.outbound = opts.outbound;
     this.createNonce = opts.createNonce ?? (() => randomBytes(24).toString("base64url"));
     this.log = opts.log;
   }
@@ -114,19 +107,16 @@ export class WalletVerifier {
     callbackUrl: string,
     trace: Trace,
   ): Promise<StartOutcome> {
-    const walletAddressUrl = toWalletAddressUrl(rawWalletAddress, this.allowHttp);
-    if (walletAddressUrl === undefined) {
+    const resolution = await this.outbound.resolveWalletAddress(rawWalletAddress);
+    if (resolution.kind === "unparseable") {
       trace.reason = "unparseable address";
       return invalid("That doesn't look like a wallet address. Use a https:// URL or $host/name.");
     }
-    const walletHost = new URL(walletAddressUrl).host;
-    trace.walletHost = walletHost;
-
-    try {
-      await this.checkHost(walletAddressUrl);
-    } catch (error) {
+    const walletAddressUrl = resolution.url;
+    trace.walletHost = new URL(walletAddressUrl).host;
+    if (resolution.kind === "unreachable") {
       trace.reason = "wallet host refused";
-      trace.error = describeError(error);
+      trace.error = resolution.error;
       return invalid("We couldn't reach that wallet address. Check it and try again.");
     }
 
@@ -146,8 +136,7 @@ export class WalletVerifier {
     }
     const authServerOrigin = new URL(authServer).origin;
     trace.authServerOrigin = authServerOrigin;
-    const isInsecure = new URL(authServer).protocol !== "https:" && !this.allowHttp;
-    if (isInsecure || !this.allowlist.allows(authServer)) {
+    if (!this.outbound.allowsCredentialTarget(authServer)) {
       trace.reason = "auth server not supported";
       return invalid(`Your wallet provider isn't supported yet (auth server ${authServerOrigin}).`);
     }
@@ -176,13 +165,12 @@ export class WalletVerifier {
     }
 
     // The auth server is allowlisted, but what it hands back is still its input: the continue url
-    // gets our token (so it must stay on an allowlisted origin) and the interact url is what the
-    // user's browser is sent to (so no javascript: or plain http unless allowHttp).
-    if (!this.allowlist.allows(grant.continue.uri)) {
+    // gets our token and the interact url is where the user's browser goes.
+    if (!this.outbound.allowsCredentialTarget(grant.continue.uri)) {
       trace.reason = "continue url not allowed";
       return { kind: "failed", reason: "Your wallet provider's response couldn't be used." };
     }
-    if (!this.isSafeRedirect(grant.interact.redirect)) {
+    if (!this.outbound.allowsBrowserRedirect(grant.interact.redirect)) {
       trace.reason = "interact redirect not allowed";
       return { kind: "failed", reason: "Your wallet provider's response couldn't be used." };
     }
@@ -246,9 +234,9 @@ export class WalletVerifier {
     }
 
     // We never asked for access, but if the server hands out a token anyway, don't keep it alive.
-    // The manage url must be on an allowlisted origin: we'd be sending the token to it.
+    // We'd be sending the token to the manage url.
     const manageUrl = findManageUrl(grant);
-    if (manageUrl !== undefined && !this.allowlist.allows(manageUrl)) {
+    if (manageUrl !== undefined && !this.outbound.allowsCredentialTarget(manageUrl)) {
       trace.reason = "token manage url not allowed";
       return { kind: "failed", reason: "Your wallet provider's response couldn't be used." };
     }
@@ -266,12 +254,6 @@ export class WalletVerifier {
       return { kind: "failed", reason: "Your wallet provider didn't confirm the wallet address." };
     }
     return { kind: "verified", walletAddress: pending.walletAddress };
-  }
-
-  private isSafeRedirect(raw: string): boolean {
-    if (!URL.canParse(raw)) return false;
-    const { protocol } = new URL(raw);
-    return protocol === "https:" || (this.allowHttp && protocol === "http:");
   }
 
   private async revokeIfIssued(grant: object, walletHost: string): Promise<void> {

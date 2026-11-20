@@ -12,7 +12,7 @@ import { createApp } from "./http/app.ts";
 import { RateLimiter } from "./http/rate-limit.ts";
 import { createLogger } from "./log.ts";
 import { createOidcProvider } from "./oidc/provider.ts";
-import { AuthServerAllowlist } from "./wallet/address.ts";
+import { OutboundPolicy } from "./wallet/outbound.ts";
 import { WalletVerifier } from "./wallet/verifier.ts";
 
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
@@ -43,20 +43,23 @@ export async function main(
     await migrate(db);
     log.info("db.migrated");
 
+    const outbound = new OutboundPolicy({
+      allowHttp: config.allowHttp,
+      authServerOrigins: config.authServerAllowlist,
+    });
     const client = await createAuthenticatedClient({
       walletAddressUrl: config.opWalletAddress,
       keyId: config.opKeyId,
       privateKey: config.opPrivateKeyPath,
       requestTimeoutMs: config.outboundTimeoutMs,
-      useHttp: config.allowHttp,
+      ...outbound.sdkOptions,
       // Our own verifier logs outcomes; the SDK's logger isn't needed and is not ours to audit.
       logLevel: "silent",
     });
     const verifier = new WalletVerifier({
       client,
       pendingLogins: new PendingLoginRepo(db),
-      allowlist: new AuthServerAllowlist(config.authServerAllowlist),
-      allowHttp: config.allowHttp,
+      outbound,
       log,
     });
     const provider = createOidcProvider({ config, clients, jwks, db, log });

@@ -12,7 +12,7 @@ import { createApp } from "../../src/http/app.ts";
 import { RateLimiter } from "../../src/http/rate-limit.ts";
 import { createLogger } from "../../src/log.ts";
 import { createOidcProvider } from "../../src/oidc/provider.ts";
-import { AuthServerAllowlist } from "../../src/wallet/address.ts";
+import { OutboundPolicy } from "../../src/wallet/outbound.ts";
 import { WalletVerifier } from "../../src/wallet/verifier.ts";
 import { createTestDb } from "./db.ts";
 import {
@@ -235,8 +235,10 @@ export async function startTestApp(
   const verifier = new WalletVerifier({
     client: await createTestClient(context),
     pendingLogins: new PendingLoginRepo(db),
-    allowlist: new AuthServerAllowlist(config.authServerAllowlist),
-    allowHttp: true,
+    outbound: new OutboundPolicy({
+      allowHttp: true,
+      authServerOrigins: config.authServerAllowlist,
+    }),
     log,
   });
   app = createApp({

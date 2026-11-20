@@ -3,10 +3,11 @@ import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { PendingLoginRepo } from "../../src/db/pending-logins.ts";
 import type { LogFields, Logger } from "../../src/log.ts";
-import { AuthServerAllowlist } from "../../src/wallet/address.ts";
 import { LoginHash } from "../../src/wallet/hash.ts";
+import { OutboundPolicy } from "../../src/wallet/outbound.ts";
 import { WalletVerifier, type CallbackParams } from "../../src/wallet/verifier.ts";
 import { createTestDb } from "../support/db.ts";
+import { PUBLIC_ADDRESS, stubLookup } from "../support/lookup.ts";
 import {
   callbackParams,
   createFakeOpenPayments,
@@ -32,10 +33,19 @@ function recordingLogger(): { log: Logger; calls: LogCall[] } {
   };
 }
 
+// allowHttp=false with every host resolving to a public address, for tests not about the host check.
+function strictPolicy(origins: string[]): OutboundPolicy {
+  return new OutboundPolicy({
+    allowHttp: false,
+    authServerOrigins: origins,
+    lookup: stubLookup(PUBLIC_ADDRESS),
+  });
+}
+
 async function setup(
   context: TestContext,
   fakeOptions: FakeOptions = {},
-  overrides: { allowlist?: string[]; checkHost?: (url: string) => Promise<void> } = {},
+  overrides: { allowlist?: string[] } = {},
 ) {
   const fake = await createFakeOpenPayments(context, fakeOptions);
   const db = await createTestDb();
@@ -44,11 +54,12 @@ async function setup(
   const verifier = new WalletVerifier({
     client: await createTestClient(context),
     pendingLogins: new PendingLoginRepo(db),
-    allowlist: new AuthServerAllowlist(overrides.allowlist ?? [fake.url]),
-    allowHttp: true,
+    outbound: new OutboundPolicy({
+      allowHttp: true,
+      authServerOrigins: overrides.allowlist ?? [fake.url],
+    }),
     createNonce: () => "client-nonce",
     log: logger.log,
-    ...(overrides.checkHost === undefined ? {} : { checkHost: overrides.checkHost }),
   });
   return { fake, verifier, calls: logger.calls };
 }
@@ -115,9 +126,7 @@ test("start rejects an http wallet address unless allowHttp", async (context) =>
   const verifier = new WalletVerifier({
     client: await createTestClient(context),
     pendingLogins: new PendingLoginRepo(db),
-    allowlist: new AuthServerAllowlist([fake.url]),
-    allowHttp: false,
-    checkHost: async () => {},
+    outbound: strictPolicy([fake.url]),
     log: recordingLogger().log,
   });
   // The wallet address is http too, so allowHttp=false refuses it before any request is made.
@@ -150,44 +159,12 @@ test("start rejects an http auth server when allowHttp is false even if the wall
   const verifier = new WalletVerifier({
     client,
     pendingLogins: new PendingLoginRepo(db),
-    allowlist: new AuthServerAllowlist([fake.url]),
-    allowHttp: false,
-    checkHost: async () => {},
+    outbound: strictPolicy([fake.url]),
     log: recordingLogger().log,
   });
   const outcome = await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
   assert.equal(outcome.kind, "invalid_input");
   assert.equal(grantCalls, 0);
-});
-
-test("start rejects a non-public host without fetching the wallet address", async (context) => {
-  const { fake, verifier } = await setup(
-    context,
-    {},
-    {
-      checkHost: async () => {
-        throw new Error("loopback");
-      },
-    },
-  );
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  assert.equal(fake.walletRequests.length, 0);
-});
-
-test("start calls an injected checkHost with the normalized wallet address url", async (context) => {
-  const seen: string[] = [];
-  const { fake, verifier } = await setup(
-    context,
-    {},
-    {
-      checkHost: async (url) => {
-        seen.push(url);
-      },
-    },
-  );
-  await verifier.start("uid-1", ` ${fake.walletAddress} `, CALLBACK);
-  assert.deepEqual(seen, [fake.walletAddress]);
 });
 
 test("start reports a wallet address that cannot be fetched as invalid input", async (context) => {
@@ -408,7 +385,12 @@ test("a revoke failure logs token.revoke_failed", async (context) => {
 });
 
 // A client that serves an https wallet and auth server, for the paths that need allowHttp=false.
-async function strictVerifier(context: TestContext, grant: unknown, continued?: unknown) {
+async function strictVerifier(
+  context: TestContext,
+  grant: unknown,
+  continued?: unknown,
+  origins = ["https://auth.example"],
+) {
   const db = await createTestDb();
   context.after(() => db.close());
   const logger = recordingLogger();
@@ -424,9 +406,7 @@ async function strictVerifier(context: TestContext, grant: unknown, continued?: 
   const verifier = new WalletVerifier({
     client,
     pendingLogins: new PendingLoginRepo(db),
-    allowlist: new AuthServerAllowlist(["https://auth.example"]),
-    allowHttp: false,
-    checkHost: async () => {},
+    outbound: strictPolicy(origins),
     createNonce: () => "client-nonce",
     log: logger.log,
   });
@@ -487,6 +467,19 @@ test("start fails on a non-https interact redirect when allowHttp is false", asy
   }
 });
 
+test("start fails on an http continue.uri when allowHttp is false, even on an allowlisted origin", async (context) => {
+  const continueUri = "http://auth.example:8080/continue/1";
+  const { verifier, calls } = await strictVerifier(
+    context,
+    pendingGrant({ continueUri }),
+    undefined,
+    ["https://auth.example", "http://auth.example:8080"],
+  );
+  const outcome = await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
+  assert.equal(outcome.kind, "failed");
+  assert.equal(calls.at(-1)?.fields?.["reason"], "continue url not allowed");
+});
+
 test("start fails when continue.uri is outside the allowlist", async (context) => {
   const other = await createFakeOpenPayments(context);
   const { fake, verifier, calls } = await setup(context, {
@@ -513,7 +506,7 @@ test("finish fails and sends no token when access_token.manage is outside the al
   assert.equal(fake.revokeRequests.length, 0);
 });
 
-test("with allowHttp false and no checkHost injected, a loopback wallet host is refused", async (context) => {
+test("with allowHttp false, a loopback wallet host is refused before any request", async (context) => {
   const fake = await createFakeOpenPayments(context);
   const db = await createTestDb();
   context.after(() => db.close());
@@ -530,8 +523,7 @@ test("with allowHttp false and no checkHost injected, a loopback wallet host is 
   const verifier = new WalletVerifier({
     client,
     pendingLogins: new PendingLoginRepo(db),
-    allowlist: new AuthServerAllowlist([fake.url]),
-    allowHttp: false,
+    outbound: new OutboundPolicy({ allowHttp: false, authServerOrigins: [fake.url] }),
     log: logger.log,
   });
   const port = new URL(fake.url).port;
