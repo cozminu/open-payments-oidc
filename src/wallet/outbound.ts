@@ -19,9 +19,8 @@ export type WalletAddressResolution =
  * `allowHttp` relaxes.
  */
 export class OutboundPolicy {
-  /** Options for `createAuthenticatedClient`. The SDK's `useHttp` rewrites every request to http. */
-  readonly sdkOptions: { readonly useHttp: boolean };
-  private readonly allowHttp: boolean;
+  /** Local development only: http is allowed everywhere and the public-host check is skipped. */
+  readonly allowHttp: boolean;
   private readonly authServerOrigins: ReadonlySet<string>;
   private readonly lookup: typeof dns.promises.lookup;
 
@@ -31,7 +30,6 @@ export class OutboundPolicy {
       options.authServerOrigins.map((origin) => new URL(origin).origin),
     );
     this.lookup = options.lookup ?? dns.promises.lookup;
-    this.sdkOptions = { useHttp: options.allowHttp };
   }
 
   /**

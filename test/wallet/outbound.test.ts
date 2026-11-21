@@ -187,11 +187,6 @@ test("allowsBrowserRedirect allows https, and http only when allowHttp", () => {
   }
 });
 
-test("sdkOptions use http exactly when allowHttp", () => {
-  assert.deepEqual(policy().sdkOptions, { useHttp: false });
-  assert.deepEqual(policy({ allowHttp: true }).sdkOptions, { useHttp: true });
-});
-
 test("the default lookup is dns", async () => {
   const strict = new OutboundPolicy({ allowHttp: false, authServerOrigins: [] });
   const result = await strict.resolveWalletAddress("https://localhost/alice");

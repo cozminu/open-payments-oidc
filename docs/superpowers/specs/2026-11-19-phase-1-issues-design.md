@@ -57,7 +57,7 @@ until then.
       (`buildConnector(...)`) so it checks IP-literal hostnames before connecting.
     - Use a clear error message, for example `refused connection to non-public address`.
 - In `src/main.ts`, `setGlobalDispatcher(outbound.createDispatcher())` before
-  `createAuthenticatedClient`. The policy creates, `main.ts` installs: process-global state stays
+  `SdkOpenPaymentsGateway.create`. The policy creates, `main.ts` installs: process-global state stays
   with the process owner. Install it unconditionally, so #2 and #3 apply with `ALLOW_HTTP=true`
   too. Only the address filter is off in that mode, the same as the pre-check today. Keep the
   previous global dispatcher. Restore it in `close()`, and in the startup-failure path too.
@@ -148,10 +148,12 @@ request comes from a browser (`Accept: text/html`), and the SDK always sends
   for each, and nothing reaches the redirect target. Have the target be a second server that
   records hits. Through the SDK, ky retries refused GETs (see #1), so the redirecting server may
   see up to 3 hits. The target must still see 0.
-- Through the verifier, in a file that installs the dispatcher globally (see the test notes in
-  #1): add an option to the fake to redirect the wallet address GET, and another to redirect the
-  grant request. `WalletVerifier.start()` returns `invalid_input` for the first and `failed` for
-  the second, and the redirect target is never hit.
+- Through the Open Payments gateway (`src/wallet/open-payments-gateway.ts`, see `GLOSSARY.md`),
+  in a file that installs the dispatcher globally (see the test notes in #1): add an option to
+  the fake to redirect the wallet address GET, and another to redirect the grant request.
+  `fetchWalletAddress()` returns `not_found` for the first and `requestGrant()` returns
+  `rejected` for the second, and the redirect target is never hit. The verifier tests already
+  cover how those kinds map to `invalid_input` and `failed`.
 - The existing suite still passes.
 
 ## Docs
@@ -208,21 +210,20 @@ Two more things make this harder than it looks. A probe during review confirmed 
     the bytes that get buffered.
   - Set a deadline of `OUTBOUND_TIMEOUT_MS` from dispatch until the body is complete, and abort
     when it expires. This bounds each attempt, body included.
-- Bound the whole call as well, in `WalletVerifier`. Wrap each SDK call (`walletAddress.get`,
+- Bound the whole call as well, in `SdkOpenPaymentsGateway`
+  (`src/wallet/open-payments-gateway.ts`). Wrap each SDK call (`walletAddress.get`,
   `grant.request`, `grant.continue`, `token.revoke`) in a helper that rejects after
-  `OUTBOUND_TIMEOUT_MS`, and map that rejection to the same outcome the call's other failures
-  already get. The user then waits at most `OUTBOUND_TIMEOUT_MS` per step, whatever ky does with
+  `OUTBOUND_TIMEOUT_MS`, and map that rejection to the same kind the call's other failures
+  already get (`not_found`, `rejected`, or `revokeError`). The user then waits at most `OUTBOUND_TIMEOUT_MS` per step, whatever ky does with
   retries. A retry ky starts in the background after we give up still has its per-attempt
   deadline, so it can't run forever. That's ugly but acceptable until the SDK takes a signal.
-  Pass the timeout into `WalletVerifierOptions`. This is transport handling, not login protocol:
-  if the SDK calls have moved behind their own module by the time you pick this up, put the
-  helper there instead of in the verifier.
+  The gateway already gets `requestTimeoutMs` in `SdkOpenPaymentsGateway.create`; use that.
 - Pass the values to `OutboundPolicy` as constructor options (`timeoutMs`, `maxResponseBytes`)
   from `main.ts`, and have `createDispatcher()` use them. They're on with `ALLOW_HTTP=true` as
   well.
 - Check that an abort mid-body surfaces through the SDK as a rejected call. The `clone().text()`
-  in the logger hook should reject, ky should cancel the response, and the verifier should map it
-  to its existing outcomes. Nothing should hang or leak an unhandled rejection.
+  in the logger hook should reject, ky should cancel the response, and the gateway should map it
+  to its existing failure kinds. Nothing should hang or leak an unhandled rejection.
 
 ## Tests
 
@@ -234,12 +235,12 @@ Two more things make this harder than it looks. A probe during review confirmed 
 - Gzip bomb: a server that sends a small gzip body, which decodes to well over the limit, with
   `content-encoding: gzip` regardless of the request. It's rejected. Also check that the request
   that went out had `accept-encoding: identity`.
-- Retries: a slow-body fake behind `walletAddress.get()`. `WalletVerifier.start()` returns within
+- Retries: a slow-body fake behind `walletAddress.get()`. `fetchWalletAddress()` returns within
   `OUTBOUND_TIMEOUT_MS` plus a small margin, even though ky retries in the background. Use a
   short timeout in the test.
-- Through the verifier, with the dispatcher installed globally in its own file: an oversized
-  wallet address response returns `invalid_input`, and an oversized grant response returns
-  `failed`.
+- Through the gateway, with the dispatcher installed globally in its own file: an oversized
+  wallet address response makes `fetchWalletAddress()` return `not_found`, and an oversized grant
+  response makes `requestGrant()` return `rejected`.
 - Env parsing: default, valid value, out of range, not an integer.
 
 ## Docs
@@ -335,7 +336,7 @@ Labels: documentation
 Today the only supported auth server is the Interledger test wallet
 (`AUTH_SERVER_ALLOWLIST` defaults to `https://auth.interledger-test.dev`). Before strangers can
 sign in with real wallets, we need to know which production Open Payments wallets accept what
-`WalletVerifier.start()` sends (`src/wallet/verifier.ts`): a grant request with
+the provider sends (`requestGrant` in `src/wallet/open-payments-gateway.ts`): a grant request with
 `subject.sub_ids` (format `uri`) and `interact.start: ["redirect"]`, and a continuation that
 returns the verified `subject`.
 

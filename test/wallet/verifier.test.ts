@@ -1,24 +1,36 @@
-import type { AuthenticatedClient } from "@interledger/open-payments";
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
 import { PendingLoginRepo } from "../../src/db/pending-logins.ts";
 import type { LogFields, Logger } from "../../src/log.ts";
-import { LoginHash } from "../../src/wallet/hash.ts";
-import { OutboundPolicy } from "../../src/wallet/outbound.ts";
+import type {
+  GrantContinuation,
+  GrantStart,
+  WalletAddressLookup,
+} from "../../src/wallet/open-payments-gateway.ts";
 import { WalletVerifier, type CallbackParams } from "../../src/wallet/verifier.ts";
 import { createTestDb } from "../support/db.ts";
-import { PUBLIC_ADDRESS, stubLookup } from "../support/lookup.ts";
+import { interactionHash } from "../support/fake-open-payments.ts";
 import {
-  callbackParams,
-  createFakeOpenPayments,
-  createTestClient,
-  FAKE_CONTINUE_TOKEN,
-  FAKE_INTERACT_REF,
-  type Fake,
-  type FakeOptions,
-} from "../support/fake-open-payments.ts";
+  AUTH_SERVER,
+  CONTINUE_TOKEN,
+  CONTINUE_URL,
+  INTERACT_NONCE,
+  INTERACT_REDIRECT,
+  InMemoryGateway,
+  WALLET_ADDRESS,
+  type InMemoryGatewayOptions,
+} from "../support/in-memory-gateway.ts";
 
 const CALLBACK = "https://oidc.example/interaction/uid-1/callback";
+const NONCE = "client-nonce";
+const INTERACT_REF = "interact-ref";
+const WALLET_HOST = "wallet.example";
+
+// What a real auth server would put in the finish redirect for the default grant.
+const APPROVED: CallbackParams = {
+  interactRef: INTERACT_REF,
+  hash: interactionHash(NONCE, INTERACT_NONCE, INTERACT_REF, AUTH_SERVER),
+};
 
 type LogCall = { level: "info" | "warn" | "error"; msg: string; fields?: LogFields };
 
@@ -33,209 +45,180 @@ function recordingLogger(): { log: Logger; calls: LogCall[] } {
   };
 }
 
-// allowHttp=false with every host resolving to a public address, for tests not about the host check.
-function strictPolicy(origins: string[]): OutboundPolicy {
-  return new OutboundPolicy({
-    allowHttp: false,
-    authServerOrigins: origins,
-    lookup: stubLookup(PUBLIC_ADDRESS),
-  });
-}
-
-async function setup(
-  context: TestContext,
-  fakeOptions: FakeOptions = {},
-  overrides: { allowlist?: string[] } = {},
-) {
-  const fake = await createFakeOpenPayments(context, fakeOptions);
+async function setup(context: TestContext, options: InMemoryGatewayOptions = {}) {
   const db = await createTestDb();
   context.after(() => db.close());
   const logger = recordingLogger();
+  const gateway = new InMemoryGateway(options);
   const verifier = new WalletVerifier({
-    client: await createTestClient(context),
+    gateway,
     pendingLogins: new PendingLoginRepo(db),
-    outbound: new OutboundPolicy({
-      allowHttp: true,
-      authServerOrigins: overrides.allowlist ?? [fake.url],
-    }),
-    createNonce: () => "client-nonce",
+    createNonce: () => NONCE,
     log: logger.log,
   });
-  return { fake, verifier, calls: logger.calls };
+  return { gateway, verifier, calls: logger.calls };
 }
 
-async function startAndInteract(
-  verifier: WalletVerifier,
-  fake: Fake,
-  uid = "uid-1",
-): Promise<CallbackParams> {
-  const started = await verifier.start(uid, fake.walletAddress, CALLBACK);
-  assert.equal(started.kind, "redirect");
-  if (started.kind !== "redirect") throw new Error("unreachable");
-  return callbackParams(await fake.interact(started.redirectUrl));
-}
-
-test("start sends a subject-only grant", async (context) => {
-  const { fake, verifier } = await setup(context);
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
+/** Starts a login and returns the verifier, ready for finish. */
+async function started(context: TestContext, options: InMemoryGatewayOptions = {}) {
+  const setUp = await setup(context, options);
+  const outcome = await setUp.verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);
   assert.equal(outcome.kind, "redirect");
-  assert.equal(fake.grantRequests.length, 1);
-  const grant = fake.grantRequests[0] as Record<string, any>;
-  assert.deepEqual(grant.subject, { sub_ids: [{ id: `${fake.url}/alice`, format: "uri" }] });
-  assert.equal("access_token" in grant, false);
-  assert.equal(grant.interact.finish.uri, CALLBACK);
-  assert.equal(grant.interact.finish.nonce, "client-nonce");
-  assert.deepEqual(grant.interact.start, ["redirect"]);
-});
+  setUp.calls.length = 0;
+  return setUp;
+}
 
-test("start rejects an unparseable address", async (context) => {
-  const { verifier, fake } = await setup(context);
-  const outcome = await verifier.start("uid-1", "not a url", CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  assert.equal(fake.walletRequests.length, 0);
-});
-
-test("start rejects an unsupported auth server", async (context) => {
-  const other = await createFakeOpenPayments(context);
-  const { fake, verifier } = await setup(context, { authServerOverride: `${other.url}/auth` });
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  if (outcome.kind !== "invalid_input") throw new Error("unreachable");
-  assert.match(outcome.message, /isn't supported yet/);
-  assert.ok(outcome.message.includes(other.url));
-  assert.equal(fake.grantRequests.length, 0);
-  assert.equal(other.grantRequests.length, 0);
-});
-
-test("start rejects an unsupported auth server given as 127.0.0.1 on another port", async (context) => {
-  const { fake, verifier } = await setup(context, {
-    authServerOverride: "http://127.0.0.1:1/auth",
-  });
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  if (outcome.kind !== "invalid_input") throw new Error("unreachable");
-  assert.match(outcome.message, /isn't supported yet/);
-  assert.ok(outcome.message.includes("http://127.0.0.1:1"));
-  assert.equal(fake.grantRequests.length, 0);
-});
-
-test("start rejects an http wallet address unless allowHttp", async (context) => {
-  const fake = await createFakeOpenPayments(context);
-  const db = await createTestDb();
-  context.after(() => db.close());
-  const verifier = new WalletVerifier({
-    client: await createTestClient(context),
-    pendingLogins: new PendingLoginRepo(db),
-    outbound: strictPolicy([fake.url]),
-    log: recordingLogger().log,
-  });
-  // The wallet address is http too, so allowHttp=false refuses it before any request is made.
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  assert.equal(fake.walletRequests.length, 0);
-  assert.equal(fake.grantRequests.length, 0);
-});
-
-test("start rejects an http auth server when allowHttp is false even if the wallet is https", async (context) => {
-  const fake = await createFakeOpenPayments(context);
-  const db = await createTestDb();
-  context.after(() => db.close());
-  // Stub client: the wallet address is served over "https" with an http auth server on the allowlist.
-  let grantCalls = 0;
-  const client = {
-    walletAddress: {
-      get: async () => ({
-        id: "https://wallet.example/alice",
-        authServer: `${fake.url}/auth`,
-      }),
+test("start asks for a grant for the wallet address and sends the user to the auth server", async (context) => {
+  const { gateway, verifier } = await setup(context);
+  const outcome = await verifier.start("uid-1", " $wallet.example/alice ", CALLBACK);
+  assert.deepEqual(outcome, { kind: "redirect", redirectUrl: INTERACT_REDIRECT });
+  assert.deepEqual(gateway.lookups, [" $wallet.example/alice "]);
+  assert.deepEqual(gateway.grantRequests, [
+    {
+      walletAddressId: WALLET_ADDRESS,
+      authServer: AUTH_SERVER,
+      callbackUrl: CALLBACK,
+      nonce: NONCE,
     },
-    grant: {
-      request: async () => {
-        grantCalls += 1;
-        throw new Error("must not be called");
+  ]);
+});
+
+test("start maps each wallet address lookup failure to invalid input and asks for no grant", async (context) => {
+  const url = "https://wallet.example/alice";
+  const cases: [WalletAddressLookup, string, RegExp][] = [
+    [{ kind: "unparseable" }, "unparseable address", /doesn't look like a wallet address/],
+    [
+      { kind: "host_refused", walletAddressUrl: url, error: "e" },
+      "wallet host refused",
+      /couldn't reach/,
+    ],
+    [
+      { kind: "not_found", walletAddressUrl: url, error: "e" },
+      "wallet address fetch failed",
+      /couldn't find/,
+    ],
+    [
+      { kind: "invalid_auth_server", walletAddressUrl: url },
+      "invalid auth server",
+      /invalid auth server/,
+    ],
+    [
+      {
+        kind: "auth_server_not_allowed",
+        walletAddressUrl: url,
+        authServer: "https://other.example/auth",
       },
+      "auth server not supported",
+      /isn't supported yet \(auth server https:\/\/other\.example\)/,
+    ],
+  ];
+  for (const [lookup, reason, message] of cases) {
+    const { gateway, verifier, calls } = await setup(context, { lookup });
+    const outcome = await verifier.start("uid-1", url, CALLBACK);
+    assert.equal(outcome.kind, "invalid_input", lookup.kind);
+    if (outcome.kind !== "invalid_input") throw new Error("unreachable");
+    assert.match(outcome.message, message);
+    assert.equal(calls.at(-1)?.fields?.["reason"], reason);
+    assert.equal(gateway.grantRequests.length, 0);
+  }
+});
+
+test("start maps each grant failure and saves nothing to finish", async (context) => {
+  const cases: [GrantStart, string, string][] = [
+    [{ kind: "auth_server_not_allowed" }, "auth server not supported", "invalid_input"],
+    [{ kind: "rejected", error: "e" }, "grant request failed", "failed"],
+    [{ kind: "not_interactive" }, "grant did not ask for interaction", "failed"],
+    [{ kind: "continue_url_not_allowed" }, "continue url not allowed", "failed"],
+    [{ kind: "interact_redirect_not_allowed" }, "interact redirect not allowed", "failed"],
+  ];
+  for (const [grant, reason, kind] of cases) {
+    const { gateway, verifier, calls } = await setup(context, { grant });
+    const outcome = await verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);
+    assert.equal(outcome.kind, kind, grant.kind);
+    assert.equal(calls.at(-1)?.fields?.["reason"], reason);
+    assert.equal((await verifier.finish("uid-1", APPROVED)).kind, "failed");
+    assert.equal(calls.at(-1)?.fields?.["reason"], "no pending login");
+    assert.equal(gateway.continuations.length, 0);
+  }
+});
+
+test("finish continues the grant and returns the wallet address", async (context) => {
+  const { gateway, verifier } = await started(context);
+  const outcome = await verifier.finish("uid-1", APPROVED);
+  assert.deepEqual(outcome, { kind: "verified", walletAddress: WALLET_ADDRESS });
+  assert.deepEqual(gateway.continuations, [
+    { continueUrl: CONTINUE_URL, continueAccessToken: CONTINUE_TOKEN, interactRef: INTERACT_REF },
+  ]);
+});
+
+test("finish verifies the wallet address's id, not what the user typed", async (context) => {
+  const id = "https://wallet.example/alice-canonical";
+  const { verifier } = await started(context, {
+    lookup: {
+      kind: "found",
+      walletAddressUrl: "https://pointer.example/alice",
+      walletAddressId: id,
+      authServer: AUTH_SERVER,
     },
-  } as unknown as AuthenticatedClient;
-  const verifier = new WalletVerifier({
-    client,
-    pendingLogins: new PendingLoginRepo(db),
-    outbound: strictPolicy([fake.url]),
-    log: recordingLogger().log,
+    continuation: { kind: "continued", subjectIds: [id] },
   });
-  const outcome = await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  assert.equal(grantCalls, 0);
-});
-
-test("start reports a wallet address that cannot be fetched as invalid input", async (context) => {
-  const { fake, verifier } = await setup(context);
-  const outcome = await verifier.start("uid-1", `${fake.url}/nobody`, CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-});
-
-test("start returns failed instead of throwing when the grant request fails", async (context) => {
-  const { fake, verifier } = await setup(
-    context,
-    { authServerOverride: "http://127.0.0.1:1/auth" },
-    { allowlist: ["http://127.0.0.1:1"] },
-  );
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "failed");
-});
-
-test("wallet on any host works as long as its auth server is allowlisted", async (context) => {
-  const authFake = await createFakeOpenPayments(context);
-  const walletFake = await createFakeOpenPayments(context, {
-    authServerOverride: authFake.authServer,
+  assert.deepEqual(await verifier.finish("uid-1", APPROVED), {
+    kind: "verified",
+    walletAddress: id,
   });
-  assert.notEqual(authFake.url, walletFake.url);
-  const { verifier } = await setup(context, {}, { allowlist: [authFake.url] });
-  const outcome = await verifier.start("uid-1", walletFake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "redirect");
-  assert.equal(walletFake.walletRequests.length, 1);
-  assert.equal(authFake.grantRequests.length, 1);
-});
-
-test("finish verifies and returns the canonical wallet address", async (context) => {
-  const { fake, verifier } = await setup(context);
-  const params = await startAndInteract(verifier, fake);
-  const outcome = await verifier.finish("uid-1", params);
-  assert.deepEqual(outcome, { kind: "verified", walletAddress: `${fake.url}/alice` });
-  assert.equal(fake.continueRequests.length, 1);
-  assert.equal(fake.continueRequests[0]?.authorization, `GNAP ${FAKE_CONTINUE_TOKEN}`);
-  assert.deepEqual(fake.continueRequests[0]?.body, { interact_ref: FAKE_INTERACT_REF });
 });
 
 test("finish is denied when the wallet rejects", async (context) => {
-  const { fake, verifier } = await setup(context, { approval: "reject" });
-  const params = await startAndInteract(verifier, fake);
-  assert.equal(params.result, "grant_rejected");
-  const outcome = await verifier.finish("uid-1", params);
+  const { gateway, verifier } = await started(context);
+  const outcome = await verifier.finish("uid-1", { result: "grant_rejected" });
   assert.equal(outcome.kind, "denied");
-  assert.equal(fake.continueRequests.length, 0);
+  assert.equal(gateway.continuations.length, 0);
 });
 
 test("finish fails on a bad hash without continuing the grant", async (context) => {
-  const { fake, verifier } = await setup(context, { approval: "tamper" });
-  const params = await startAndInteract(verifier, fake);
-  const outcome = await verifier.finish("uid-1", params);
+  const { gateway, verifier, calls } = await started(context);
+  const outcome = await verifier.finish("uid-1", { ...APPROVED, hash: `x${APPROVED.hash}` });
   assert.equal(outcome.kind, "failed");
-  assert.equal(fake.continueRequests.length, 0);
+  assert.equal(calls.at(-1)?.fields?.["reason"], "hash mismatch");
+  assert.equal(gateway.continuations.length, 0);
 });
 
 test("finish fails when the redirect has no interact_ref or hash", async (context) => {
-  const { fake, verifier } = await setup(context);
-  await startAndInteract(verifier, fake);
+  const { gateway, verifier } = await started(context);
   const outcome = await verifier.finish("uid-1", {});
   assert.equal(outcome.kind, "failed");
-  assert.equal(fake.continueRequests.length, 0);
+  assert.equal(gateway.continuations.length, 0);
 });
 
-test("finish fails when the verified subject is a different wallet address", async (context) => {
-  const { fake, verifier } = await setup(context, { verifiedPath: "/bob" });
-  const params = await startAndInteract(verifier, fake);
-  const outcome = await verifier.finish("uid-1", params);
-  assert.equal(outcome.kind, "failed");
+test("finish fails unless the auth server verified exactly this wallet address", async (context) => {
+  const cases: [readonly string[] | undefined, string][] = [
+    [["https://wallet.example/bob"], "continuation subject mismatch"],
+    [[], "continuation subject mismatch"],
+    [undefined, "continuation had no subject"],
+  ];
+  for (const [subjectIds, reason] of cases) {
+    const { verifier, calls } = await started(context, {
+      continuation: { kind: "continued", subjectIds },
+    });
+    const outcome = await verifier.finish("uid-1", APPROVED);
+    assert.equal(outcome.kind, "failed");
+    if (outcome.kind !== "failed") throw new Error("unreachable");
+    assert.match(outcome.reason, /didn't confirm the wallet address/);
+    assert.equal(calls.at(-1)?.fields?.["reason"], reason);
+  }
+});
+
+test("finish maps each continuation failure to failed", async (context) => {
+  const cases: [GrantContinuation, string][] = [
+    [{ kind: "continue_url_not_allowed" }, "continue url not allowed"],
+    [{ kind: "rejected", error: "e" }, "grant continuation failed"],
+    [{ kind: "manage_url_not_allowed" }, "token manage url not allowed"],
+  ];
+  for (const [continuation, reason] of cases) {
+    const { verifier, calls } = await started(context, { continuation });
+    assert.equal((await verifier.finish("uid-1", APPROVED)).kind, "failed", continuation.kind);
+    assert.equal(calls.at(-1)?.fields?.["reason"], reason);
+  }
 });
 
 test("finish fails for an unknown uid", async (context) => {
@@ -245,122 +228,141 @@ test("finish fails for an unknown uid", async (context) => {
 });
 
 test("finish twice: the second call fails as expired or already used", async (context) => {
-  const { fake, verifier } = await setup(context);
-  const params = await startAndInteract(verifier, fake);
-  assert.equal((await verifier.finish("uid-1", params)).kind, "verified");
-  const second = await verifier.finish("uid-1", params);
+  const { gateway, verifier } = await started(context);
+  assert.equal((await verifier.finish("uid-1", APPROVED)).kind, "verified");
+  const second = await verifier.finish("uid-1", APPROVED);
   assert.equal(second.kind, "failed");
   if (second.kind !== "failed") throw new Error("unreachable");
   assert.match(second.reason, /expired or already used/);
+  assert.equal(gateway.continuations.length, 1);
 });
 
-test("finish revokes a returned access token", async (context) => {
-  const { fake, verifier } = await setup(context, { returnAccessToken: true });
-  const params = await startAndInteract(verifier, fake);
-  const outcome = await verifier.finish("uid-1", params);
-  assert.equal(outcome.kind, "verified");
-  assert.equal(fake.revokeRequests.length, 1);
-  assert.equal(fake.revokeRequests[0]?.authorization, "GNAP issued-token");
-});
-
-test("finish revokes a returned access token even when the subject is wrong", async (context) => {
-  const { fake, verifier } = await setup(context, {
-    returnAccessToken: true,
-    verifiedPath: "/bob",
+test("a revoke failure logs token.revoke_failed and the login still verifies", async (context) => {
+  const { verifier, calls } = await started(context, {
+    continuation: { kind: "continued", subjectIds: [WALLET_ADDRESS], revokeError: "forbidden" },
   });
-  const params = await startAndInteract(verifier, fake);
-  assert.equal((await verifier.finish("uid-1", params)).kind, "failed");
-  assert.equal(fake.revokeRequests.length, 1);
-});
-
-test("finish does not revoke when no access token is returned", async (context) => {
-  const { fake, verifier } = await setup(context);
-  const params = await startAndInteract(verifier, fake);
-  await verifier.finish("uid-1", params);
-  assert.equal(fake.revokeRequests.length, 0);
-});
-
-test("finish tolerates a revoke failure and logs one warning without secrets", async (context) => {
-  const { fake, verifier, calls } = await setup(context, {
-    returnAccessToken: true,
-    revokeFails: true,
-  });
-  const params = await startAndInteract(verifier, fake);
-  const outcome = await verifier.finish("uid-1", params);
+  const outcome = await verifier.finish("uid-1", APPROVED);
   assert.equal(outcome.kind, "verified");
-  assert.equal(fake.revokeRequests.length, 1);
+  assert.deepEqual(calls[0], {
+    level: "warn",
+    msg: "token.revoke_failed",
+    fields: { walletHost: WALLET_HOST, error: "forbidden" },
+  });
   assert.equal(calls.filter((call) => call.level === "warn").length, 1);
-  const logged = JSON.stringify(calls);
-  for (const secret of [FAKE_CONTINUE_TOKEN, FAKE_INTERACT_REF, "issued-token", "next-token"]) {
-    assert.equal(logged.includes(secret), false, `log leaked ${secret}`);
-  }
-  assert.equal(logged.includes(params.hash ?? "missing"), false);
-  assert.equal(logged.includes(`${fake.url}/alice`), false, "full wallet address was logged");
 });
 
-test("logs never contain secrets on failure paths either", async (context) => {
-  const { fake, verifier, calls } = await setup(context, { approval: "tamper" });
-  const params = await startAndInteract(verifier, fake);
-  await verifier.finish("uid-1", params);
-  const logged = JSON.stringify(calls);
-  for (const secret of [FAKE_CONTINUE_TOKEN, FAKE_INTERACT_REF, params.hash ?? "missing"]) {
-    assert.equal(logged.includes(secret), false, `log leaked ${secret}`);
+test("a revoke failure is logged even when the subject is wrong", async (context) => {
+  const { verifier, calls } = await started(context, {
+    continuation: { kind: "continued", subjectIds: [], revokeError: "forbidden" },
+  });
+  assert.equal((await verifier.finish("uid-1", APPROVED)).kind, "failed");
+  assert.equal(calls[0]?.msg, "token.revoke_failed");
+});
+
+test("start and finish never throw, even when the gateway breaks its contract", async (context) => {
+  const db = await createTestDb();
+  context.after(() => db.close());
+  const logger = recordingLogger();
+  class BrokenGateway extends InMemoryGateway {
+    public override async fetchWalletAddress(): Promise<WalletAddressLookup> {
+      throw new Error("boom");
+    }
   }
+  const verifier = new WalletVerifier({
+    gateway: new BrokenGateway(),
+    pendingLogins: new PendingLoginRepo(db),
+    log: logger.log,
+  });
+  const outcome = await verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);
+  assert.deepEqual(outcome, { kind: "failed", reason: "Something went wrong. Please try again." });
+  assert.deepEqual(logger.calls, [
+    {
+      level: "error",
+      msg: "login.start",
+      fields: { outcome: "failed", reason: "internal error", error: "boom" },
+    },
+  ]);
 });
 
 test("start logs login.start with wallet host, auth server origin and outcome", async (context) => {
-  const { fake, verifier, calls } = await setup(context);
-  await verifier.start("uid-1", fake.walletAddress, CALLBACK);
+  const { verifier, calls } = await setup(context);
+  await verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);
   assert.deepEqual(calls, [
     {
       level: "info",
       msg: "login.start",
       fields: {
-        walletHost: new URL(fake.url).host,
-        authServerOrigin: new URL(`${fake.url}/auth`).origin,
+        walletHost: WALLET_HOST,
+        authServerOrigin: "https://auth.example",
         outcome: "redirect",
       },
     },
   ]);
 });
 
-test("start logs invalid input with a reason", async (context) => {
-  const { fake, verifier, calls } = await setup(context, {
-    authServerOverride: "http://127.0.0.1:1/auth",
+test("start logs the host of what the user typed, and the lookup error", async (context) => {
+  const { verifier, calls } = await setup(context, {
+    lookup: {
+      kind: "not_found",
+      walletAddressUrl: "https://pointer.example/alice",
+      error: "Not Found (status 404)",
+    },
   });
-  await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.msg, "login.start");
-  assert.equal(calls[0]?.fields?.["outcome"], "invalid_input");
-  assert.equal(typeof calls[0]?.fields?.["reason"], "string");
-  assert.equal(calls[0]?.fields?.["walletHost"], new URL(fake.url).host);
+  await verifier.start("uid-1", "$pointer.example/alice", CALLBACK);
+  assert.deepEqual(calls, [
+    {
+      level: "info",
+      msg: "login.start",
+      fields: {
+        walletHost: "pointer.example",
+        reason: "wallet address fetch failed",
+        error: "Not Found (status 404)",
+        outcome: "invalid_input",
+      },
+    },
+  ]);
+});
+
+test("start logs a grant failure as a warning with the auth server origin", async (context) => {
+  const { verifier, calls } = await setup(context, { grant: { kind: "rejected", error: "nope" } });
+  await verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);
+  assert.deepEqual(calls, [
+    {
+      level: "warn",
+      msg: "login.start",
+      fields: {
+        walletHost: WALLET_HOST,
+        authServerOrigin: "https://auth.example",
+        reason: "grant request failed",
+        error: "nope",
+        outcome: "failed",
+      },
+    },
+  ]);
 });
 
 test("finish logs login.finish verified with the wallet host", async (context) => {
-  const { fake, verifier, calls } = await setup(context);
-  const params = await startAndInteract(verifier, fake);
-  calls.length = 0;
-  await verifier.finish("uid-1", params);
+  const { verifier, calls } = await started(context);
+  await verifier.finish("uid-1", APPROVED);
   assert.deepEqual(calls, [
     {
       level: "info",
       msg: "login.finish",
-      fields: { walletHost: new URL(fake.url).host, outcome: "verified" },
+      fields: { walletHost: WALLET_HOST, outcome: "verified" },
     },
   ]);
 });
 
 test("finish logs a failure reason as a warning", async (context) => {
-  const { fake, verifier, calls } = await setup(context, { approval: "tamper" });
-  const params = await startAndInteract(verifier, fake);
-  calls.length = 0;
-  await verifier.finish("uid-1", params);
-  assert.equal(calls.length, 1);
-  assert.equal(calls[0]?.level, "warn");
-  assert.equal(calls[0]?.msg, "login.finish");
-  assert.equal(calls[0]?.fields?.["outcome"], "failed");
-  assert.equal(calls[0]?.fields?.["walletHost"], new URL(fake.url).host);
-  assert.equal(typeof calls[0]?.fields?.["reason"], "string");
+  const { verifier, calls } = await started(context);
+  await verifier.finish("uid-1", { ...APPROVED, hash: "bad" });
+  assert.deepEqual(calls, [
+    {
+      level: "warn",
+      msg: "login.finish",
+      fields: { walletHost: WALLET_HOST, reason: "hash mismatch", outcome: "failed" },
+    },
+  ]);
 });
 
 test("finish for an unknown login logs without a wallet host", async (context) => {
@@ -372,164 +374,17 @@ test("finish for an unknown login logs without a wallet host", async (context) =
   assert.equal("walletHost" in (calls[0]?.fields ?? {}), false);
 });
 
-test("a revoke failure logs token.revoke_failed", async (context) => {
-  const { fake, verifier, calls } = await setup(context, {
-    returnAccessToken: true,
-    revokeFails: true,
-  });
-  const params = await startAndInteract(verifier, fake);
-  await verifier.finish("uid-1", params);
-  const entry = calls.find((call) => call.msg === "token.revoke_failed");
-  assert.equal(entry?.level, "warn");
-  assert.equal(entry?.fields?.["walletHost"], new URL(fake.url).host);
-});
-
-// A client that serves an https wallet and auth server, for the paths that need allowHttp=false.
-async function strictVerifier(
-  context: TestContext,
-  grant: unknown,
-  continued?: unknown,
-  origins = ["https://auth.example"],
-) {
-  const db = await createTestDb();
-  context.after(() => db.close());
-  const logger = recordingLogger();
-  const client = {
-    walletAddress: {
-      get: async () => ({
-        id: "https://wallet.example/alice",
-        authServer: "https://auth.example/tenant",
-      }),
-    },
-    grant: { request: async () => grant, continue: async () => continued },
-  } as unknown as AuthenticatedClient;
-  const verifier = new WalletVerifier({
-    client,
-    pendingLogins: new PendingLoginRepo(db),
-    outbound: strictPolicy(origins),
-    createNonce: () => "client-nonce",
-    log: logger.log,
-  });
-  return { verifier, calls: logger.calls };
-}
-
-function pendingGrant(overrides: { redirect?: string; continueUri?: string } = {}) {
-  return {
-    interact: { redirect: overrides.redirect ?? "https://auth.example/interact/1", finish: "n" },
-    continue: {
-      access_token: { value: "t" },
-      uri: overrides.continueUri ?? "https://auth.example/continue/1",
-    },
-  };
-}
-
-// The SDK validates continuation responses against a spec that only knows format "uri", so a
-// different format can't come through the fake server; a stub client reaches the predicate.
-test("finish fails when the subject has the right id but a different format", async (context) => {
-  const hash = LoginHash.compute({
-    clientNonce: "client-nonce",
-    interactNonce: "n",
-    interactRef: "r",
-    authServerUrl: "https://auth.example/tenant",
-  });
-  const continued = (format: string) => ({
-    subject: { sub_ids: [{ id: "https://wallet.example/alice", format }] },
-    continue: { access_token: { value: "t" }, uri: "https://auth.example/continue/1" },
-  });
-  const outcomes = [];
-  const reasons = [];
-  for (const format of ["uri", "opaque"]) {
-    const { verifier, calls } = await strictVerifier(context, pendingGrant(), continued(format));
-    await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
-    outcomes.push((await verifier.finish("uid-1", { interactRef: "r", hash })).kind);
-    reasons.push(calls.at(-1)?.fields?.["reason"]);
+test("logs never contain secrets or the full wallet address", async (context) => {
+  for (const params of [APPROVED, { ...APPROVED, hash: "tampered" }]) {
+    const { verifier, calls } = await setup(context, {
+      continuation: { kind: "continued", subjectIds: [WALLET_ADDRESS], revokeError: "forbidden" },
+    });
+    await verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);
+    await verifier.finish("uid-1", params);
+    const logged = JSON.stringify(calls);
+    for (const secret of [CONTINUE_TOKEN, INTERACT_REF, INTERACT_NONCE, NONCE, params.hash ?? ""]) {
+      assert.equal(logged.includes(secret), false, `log leaked ${secret}`);
+    }
+    assert.equal(logged.includes(WALLET_ADDRESS), false, "full wallet address was logged");
   }
-  // "uri" proves the stub reaches the subject check; only the format differs for "opaque".
-  assert.deepEqual(outcomes, ["verified", "failed"]);
-  assert.equal(reasons[1], "continuation subject mismatch");
-});
-
-test("start accepts an https interact redirect when allowHttp is false", async (context) => {
-  const { verifier } = await strictVerifier(context, pendingGrant());
-  const outcome = await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
-  assert.deepEqual(outcome, { kind: "redirect", redirectUrl: "https://auth.example/interact/1" });
-});
-
-test("start fails on a non-https interact redirect when allowHttp is false", async (context) => {
-  for (const redirect of ["http://auth.example/interact/1", "javascript:alert(1)", "not a url"]) {
-    const { verifier, calls } = await strictVerifier(context, pendingGrant({ redirect }));
-    const outcome = await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
-    assert.equal(outcome.kind, "failed", redirect);
-    assert.equal(calls.at(-1)?.fields?.["reason"], "interact redirect not allowed");
-    // Nothing was saved, so there is nothing to finish.
-    assert.equal((await verifier.finish("uid-1", { interactRef: "r", hash: "h" })).kind, "failed");
-    assert.equal(calls.at(-1)?.fields?.["reason"], "no pending login");
-  }
-});
-
-test("start fails on an http continue.uri when allowHttp is false, even on an allowlisted origin", async (context) => {
-  const continueUri = "http://auth.example:8080/continue/1";
-  const { verifier, calls } = await strictVerifier(
-    context,
-    pendingGrant({ continueUri }),
-    undefined,
-    ["https://auth.example", "http://auth.example:8080"],
-  );
-  const outcome = await verifier.start("uid-1", "https://wallet.example/alice", CALLBACK);
-  assert.equal(outcome.kind, "failed");
-  assert.equal(calls.at(-1)?.fields?.["reason"], "continue url not allowed");
-});
-
-test("start fails when continue.uri is outside the allowlist", async (context) => {
-  const other = await createFakeOpenPayments(context);
-  const { fake, verifier, calls } = await setup(context, {
-    continueUriOverride: `${other.url}/auth/continue/1`,
-  });
-  const outcome = await verifier.start("uid-1", fake.walletAddress, CALLBACK);
-  assert.equal(outcome.kind, "failed");
-  assert.equal(calls.at(-1)?.fields?.["reason"], "continue url not allowed");
-  assert.equal((await verifier.finish("uid-1", { interactRef: "r", hash: "h" })).kind, "failed");
-  assert.equal(other.continueRequests.length, 0);
-});
-
-test("finish fails and sends no token when access_token.manage is outside the allowlist", async (context) => {
-  const other = await createFakeOpenPayments(context);
-  const { fake, verifier, calls } = await setup(context, {
-    returnAccessToken: true,
-    manageUrlOverride: `${other.url}/auth/token/1`,
-  });
-  const params = await startAndInteract(verifier, fake);
-  const outcome = await verifier.finish("uid-1", params);
-  assert.equal(outcome.kind, "failed");
-  assert.equal(calls.at(-1)?.fields?.["reason"], "token manage url not allowed");
-  assert.equal(other.revokeRequests.length, 0);
-  assert.equal(fake.revokeRequests.length, 0);
-});
-
-test("with allowHttp false, a loopback wallet host is refused before any request", async (context) => {
-  const fake = await createFakeOpenPayments(context);
-  const db = await createTestDb();
-  context.after(() => db.close());
-  const logger = recordingLogger();
-  let clientCalls = 0;
-  const client = {
-    walletAddress: {
-      get: async () => {
-        clientCalls += 1;
-        throw new Error("must not be called");
-      },
-    },
-  } as unknown as AuthenticatedClient;
-  const verifier = new WalletVerifier({
-    client,
-    pendingLogins: new PendingLoginRepo(db),
-    outbound: new OutboundPolicy({ allowHttp: false, authServerOrigins: [fake.url] }),
-    log: logger.log,
-  });
-  const port = new URL(fake.url).port;
-  const outcome = await verifier.start("uid-1", `https://127.0.0.1:${port}/alice`, CALLBACK);
-  assert.equal(outcome.kind, "invalid_input");
-  assert.equal(logger.calls.at(-1)?.fields?.["reason"], "wallet host refused");
-  assert.equal(clientCalls, 0);
-  assert.equal(fake.walletRequests.length, 0);
 });

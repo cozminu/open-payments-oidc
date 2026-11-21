@@ -1,14 +1,8 @@
-import {
-  isFinalizedGrantWithSubject,
-  isPendingGrant,
-  OpenPaymentsClientError,
-  type AuthenticatedClient,
-} from "@interledger/open-payments";
 import { randomBytes } from "node:crypto";
 import type { PendingLoginRepo } from "../db/pending-logins.ts";
 import type { Logger } from "../log.ts";
 import { LoginHash } from "./hash.ts";
-import type { OutboundPolicy } from "./outbound.ts";
+import type { OpenPaymentsGateway } from "./open-payments-gateway.ts";
 
 export type StartOutcome =
   | { kind: "redirect"; redirectUrl: string }
@@ -23,28 +17,26 @@ export type FinishOutcome =
 export type CallbackParams = { interactRef?: string; hash?: string; result?: string };
 
 export type WalletVerifierOptions = {
-  client: AuthenticatedClient;
+  gateway: OpenPaymentsGateway;
   pendingLogins: PendingLoginRepo;
-  outbound: OutboundPolicy;
   createNonce?: () => string;
   log: Logger;
 };
 
 const EXPIRED = "Login expired or already used. Please start again.";
 const INTERNAL = "Something went wrong. Please try again.";
+const UNUSABLE = "Your wallet provider's response couldn't be used.";
 
 /** Proves a user controls a wallet address with an interactive Open Payments subject grant. */
 export class WalletVerifier {
-  private readonly client: AuthenticatedClient;
+  private readonly gateway: OpenPaymentsGateway;
   private readonly pendingLogins: PendingLoginRepo;
-  private readonly outbound: OutboundPolicy;
   private readonly createNonce: () => string;
   private readonly log: Logger;
 
   constructor(opts: WalletVerifierOptions) {
-    this.client = opts.client;
+    this.gateway = opts.gateway;
     this.pendingLogins = opts.pendingLogins;
-    this.outbound = opts.outbound;
     this.createNonce = opts.createNonce ?? (() => randomBytes(24).toString("base64url"));
     this.log = opts.log;
   }
@@ -107,83 +99,67 @@ export class WalletVerifier {
     callbackUrl: string,
     trace: Trace,
   ): Promise<StartOutcome> {
-    const resolution = await this.outbound.resolveWalletAddress(rawWalletAddress);
-    if (resolution.kind === "unparseable") {
+    const lookup = await this.gateway.fetchWalletAddress(rawWalletAddress);
+    if (lookup.kind === "unparseable") {
       trace.reason = "unparseable address";
       return invalid("That doesn't look like a wallet address. Use a https:// URL or $host/name.");
     }
-    const walletAddressUrl = resolution.url;
-    trace.walletHost = new URL(walletAddressUrl).host;
-    if (resolution.kind === "unreachable") {
-      trace.reason = "wallet host refused";
-      trace.error = resolution.error;
-      return invalid("We couldn't reach that wallet address. Check it and try again.");
+    trace.walletHost = new URL(lookup.walletAddressUrl).host;
+    switch (lookup.kind) {
+      case "host_refused":
+        trace.reason = "wallet host refused";
+        trace.error = lookup.error;
+        return invalid("We couldn't reach that wallet address. Check it and try again.");
+      case "not_found":
+        trace.reason = "wallet address fetch failed";
+        trace.error = lookup.error;
+        return invalid("We couldn't find that wallet address. Check it and try again.");
+      case "invalid_auth_server":
+        trace.reason = "invalid auth server";
+        return invalid("Your wallet provider isn't supported yet (invalid auth server).");
+      case "auth_server_not_allowed":
+        return unsupportedAuthServer(lookup.authServer, trace);
+      case "found":
+        break;
     }
-
-    let walletAddress;
-    try {
-      walletAddress = await this.client.walletAddress.get({ url: walletAddressUrl });
-    } catch (error) {
-      trace.reason = "wallet address fetch failed";
-      trace.error = describeError(error);
-      return invalid("We couldn't find that wallet address. Check it and try again.");
-    }
-
-    const authServer = walletAddress.authServer;
-    if (!URL.canParse(authServer)) {
-      trace.reason = "invalid auth server";
-      return invalid("Your wallet provider isn't supported yet (invalid auth server).");
-    }
-    const authServerOrigin = new URL(authServer).origin;
-    trace.authServerOrigin = authServerOrigin;
-    if (!this.outbound.allowsCredentialTarget(authServer)) {
-      trace.reason = "auth server not supported";
-      return invalid(`Your wallet provider isn't supported yet (auth server ${authServerOrigin}).`);
-    }
+    trace.authServerOrigin = new URL(lookup.authServer).origin;
 
     const clientNonce = this.createNonce();
-    let grant;
-    try {
-      grant = await this.client.grant.request(
-        { url: authServer },
-        {
-          subject: { sub_ids: [{ id: walletAddress.id, format: "uri" }] },
-          interact: {
-            start: ["redirect"],
-            finish: { method: "redirect", uri: callbackUrl, nonce: clientNonce },
-          },
-        },
-      );
-    } catch (error) {
-      trace.reason = "grant request failed";
-      trace.error = describeError(error);
-      return { kind: "failed", reason: "Your wallet provider didn't accept the request." };
-    }
-    if (!isPendingGrant(grant)) {
-      trace.reason = "grant did not ask for interaction";
-      return { kind: "failed", reason: "Your wallet provider didn't ask for approval." };
-    }
-
-    // The auth server is allowlisted, but what it hands back is still its input: the continue url
-    // gets our token and the interact url is where the user's browser goes.
-    if (!this.outbound.allowsCredentialTarget(grant.continue.uri)) {
-      trace.reason = "continue url not allowed";
-      return { kind: "failed", reason: "Your wallet provider's response couldn't be used." };
-    }
-    if (!this.outbound.allowsBrowserRedirect(grant.interact.redirect)) {
-      trace.reason = "interact redirect not allowed";
-      return { kind: "failed", reason: "Your wallet provider's response couldn't be used." };
+    const grant = await this.gateway.requestGrant({
+      walletAddressId: lookup.walletAddressId,
+      authServer: lookup.authServer,
+      callbackUrl,
+      nonce: clientNonce,
+    });
+    switch (grant.kind) {
+      case "auth_server_not_allowed":
+        return unsupportedAuthServer(lookup.authServer, trace);
+      case "rejected":
+        trace.reason = "grant request failed";
+        trace.error = grant.error;
+        return { kind: "failed", reason: "Your wallet provider didn't accept the request." };
+      case "not_interactive":
+        trace.reason = "grant did not ask for interaction";
+        return { kind: "failed", reason: "Your wallet provider didn't ask for approval." };
+      case "continue_url_not_allowed":
+        trace.reason = "continue url not allowed";
+        return { kind: "failed", reason: UNUSABLE };
+      case "interact_redirect_not_allowed":
+        trace.reason = "interact redirect not allowed";
+        return { kind: "failed", reason: UNUSABLE };
+      case "pending":
+        break;
     }
     await this.pendingLogins.save({
       uid,
-      walletAddress: walletAddress.id,
-      authServerUrl: authServer,
+      walletAddress: lookup.walletAddressId,
+      authServerUrl: lookup.authServer,
       clientNonce,
-      interactNonce: grant.interact.finish,
-      continueUrl: grant.continue.uri,
-      continueAccessToken: grant.continue.access_token.value,
+      interactNonce: grant.interactNonce,
+      continueUrl: grant.continueUrl,
+      continueAccessToken: grant.continueAccessToken,
     });
-    return { kind: "redirect", redirectUrl: grant.interact.redirect };
+    return { kind: "redirect", redirectUrl: grant.redirectUrl };
   }
 
   private async doFinish(
@@ -221,55 +197,38 @@ export class WalletVerifier {
       return { kind: "failed", reason: "The wallet provider's response couldn't be verified." };
     }
 
-    let grant;
-    try {
-      grant = await this.client.grant.continue(
-        { url: pending.continueUrl, accessToken: pending.continueAccessToken },
-        { interact_ref: params.interactRef },
-      );
-    } catch (error) {
-      trace.reason = "grant continuation failed";
-      trace.error = describeError(error);
-      return { kind: "failed", reason: "Your wallet provider didn't confirm the login." };
+    const continuation = await this.gateway.continueGrant({
+      continueUrl: pending.continueUrl,
+      continueAccessToken: pending.continueAccessToken,
+      interactRef: params.interactRef,
+    });
+    switch (continuation.kind) {
+      case "continue_url_not_allowed":
+        trace.reason = "continue url not allowed";
+        return { kind: "failed", reason: UNUSABLE };
+      case "rejected":
+        trace.reason = "grant continuation failed";
+        trace.error = continuation.error;
+        return { kind: "failed", reason: "Your wallet provider didn't confirm the login." };
+      case "manage_url_not_allowed":
+        trace.reason = "token manage url not allowed";
+        return { kind: "failed", reason: UNUSABLE };
+      case "continued":
+        break;
     }
-
-    // We never asked for access, but if the server hands out a token anyway, don't keep it alive.
-    // We'd be sending the token to the manage url.
-    const manageUrl = findManageUrl(grant);
-    if (manageUrl !== undefined && !this.outbound.allowsCredentialTarget(manageUrl)) {
-      trace.reason = "token manage url not allowed";
-      return { kind: "failed", reason: "Your wallet provider's response couldn't be used." };
+    if (continuation.revokeError !== undefined) {
+      this.log.warn("token.revoke_failed", { walletHost, error: continuation.revokeError });
     }
-    await this.revokeIfIssued(grant, walletHost);
-
-    if (!isFinalizedGrantWithSubject(grant)) {
+    if (continuation.subjectIds === undefined) {
       trace.reason = "continuation had no subject";
       return { kind: "failed", reason: "Your wallet provider didn't confirm the wallet address." };
     }
-    const isVerified = grant.subject.sub_ids.some(
-      (subId) => subId.format === "uri" && subId.id === pending.walletAddress,
-    );
-    if (!isVerified) {
+    if (!continuation.subjectIds.includes(pending.walletAddress)) {
       trace.reason = "continuation subject mismatch";
       return { kind: "failed", reason: "Your wallet provider didn't confirm the wallet address." };
     }
     return { kind: "verified", walletAddress: pending.walletAddress };
   }
-
-  private async revokeIfIssued(grant: object, walletHost: string): Promise<void> {
-    const token = (grant as { access_token?: { value?: unknown; manage?: unknown } }).access_token;
-    if (typeof token?.value !== "string" || typeof token.manage !== "string") return;
-    try {
-      await this.client.token.revoke({ url: token.manage, accessToken: token.value });
-    } catch (error) {
-      this.log.warn("token.revoke_failed", { walletHost, error: describeError(error) });
-    }
-  }
-}
-
-function findManageUrl(grant: object): string | undefined {
-  const token = (grant as { access_token?: { manage?: unknown } }).access_token;
-  return typeof token?.manage === "string" ? token.manage : undefined;
 }
 
 // What a start or finish learned along the way, logged once as a single event. Never secrets.
@@ -279,10 +238,13 @@ function invalid(message: string): StartOutcome {
   return { kind: "invalid_input", message };
 }
 
-// Message and status only. The SDK's `description` can echo response bodies.
+function unsupportedAuthServer(authServer: string, trace: Trace): StartOutcome {
+  const origin = new URL(authServer).origin;
+  trace.authServerOrigin = origin;
+  trace.reason = "auth server not supported";
+  return invalid(`Your wallet provider isn't supported yet (auth server ${origin}).`);
+}
+
 function describeError(error: unknown): string {
-  if (error instanceof OpenPaymentsClientError) {
-    return error.status === undefined ? error.message : `${error.message} (status ${error.status})`;
-  }
   return error instanceof Error ? error.message : String(error);
 }

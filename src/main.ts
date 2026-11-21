@@ -1,4 +1,3 @@
-import { createAuthenticatedClient } from "@interledger/open-payments";
 import type { Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { loadClients } from "./config/clients.ts";
@@ -12,6 +11,7 @@ import { createApp } from "./http/app.ts";
 import { RateLimiter } from "./http/rate-limit.ts";
 import { createLogger } from "./log.ts";
 import { createOidcProvider } from "./oidc/provider.ts";
+import { SdkOpenPaymentsGateway } from "./wallet/open-payments-gateway.ts";
 import { OutboundPolicy } from "./wallet/outbound.ts";
 import { WalletVerifier } from "./wallet/verifier.ts";
 
@@ -47,21 +47,14 @@ export async function main(
       allowHttp: config.allowHttp,
       authServerOrigins: config.authServerAllowlist,
     });
-    const client = await createAuthenticatedClient({
+    const gateway = await SdkOpenPaymentsGateway.create({
       walletAddressUrl: config.opWalletAddress,
       keyId: config.opKeyId,
       privateKey: config.opPrivateKeyPath,
       requestTimeoutMs: config.outboundTimeoutMs,
-      ...outbound.sdkOptions,
-      // Our own verifier logs outcomes; the SDK's logger isn't needed and is not ours to audit.
-      logLevel: "silent",
-    });
-    const verifier = new WalletVerifier({
-      client,
-      pendingLogins: new PendingLoginRepo(db),
       outbound,
-      log,
     });
+    const verifier = new WalletVerifier({ gateway, pendingLogins: new PendingLoginRepo(db), log });
     const provider = createOidcProvider({ config, clients, jwks, db, log });
     app = createApp({
       provider,

@@ -17,7 +17,7 @@ import { WalletVerifier } from "../../src/wallet/verifier.ts";
 import { createTestDb } from "./db.ts";
 import {
   createFakeOpenPayments,
-  createTestClient,
+  createTestGateway,
   type Fake,
   type FakeOptions,
 } from "./fake-open-payments.ts";
@@ -232,13 +232,13 @@ export async function startTestApp(
     },
   });
   const provider = createOidcProvider({ config, clients, jwks: options.jwks ?? JWKS, db, log });
+  const outbound = new OutboundPolicy({
+    allowHttp: config.allowHttp,
+    authServerOrigins: config.authServerAllowlist,
+  });
   const verifier = new WalletVerifier({
-    client: await createTestClient(context),
+    gateway: await createTestGateway(context, outbound),
     pendingLogins: new PendingLoginRepo(db),
-    outbound: new OutboundPolicy({
-      allowHttp: true,
-      authServerOrigins: config.authServerAllowlist,
-    }),
     log,
   });
   app = createApp({

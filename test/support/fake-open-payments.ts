@@ -1,4 +1,3 @@
-import { createAuthenticatedClient, type AuthenticatedClient } from "@interledger/open-payments";
 import { createHash, generateKeyPairSync } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -6,6 +5,8 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
+import { SdkOpenPaymentsGateway } from "../../src/wallet/open-payments-gateway.ts";
+import type { OutboundPolicy } from "../../src/wallet/outbound.ts";
 import type { CallbackParams } from "../../src/wallet/verifier.ts";
 
 export type Approval = "approve" | "reject" | "tamper";
@@ -24,6 +25,10 @@ export type FakeOptions = {
   continueUriOverride?: string;
   /** `access_token.manage` in the continuation response (needs returnAccessToken). */
   manageUrlOverride?: string;
+  /** `interact.redirect` handed out in the grant response (default `<url>/interact/<id>`). */
+  interactRedirectOverride?: string;
+  /** Format of the verified subject id in the continuation response (default "uri"). */
+  subjectFormat?: string;
 };
 
 export type RecordedRequest = { authorization: string | undefined; body?: unknown };
@@ -128,7 +133,10 @@ export async function createFakeOpenPayments(
       const interactNonce = `as-nonce-${id}`;
       grants.set(id, { finishUri: finish.uri, finishNonce: finish.nonce, interactNonce });
       sendJson(response, 200, {
-        interact: { redirect: `${url}/interact/${id}`, finish: interactNonce },
+        interact: {
+          redirect: options.interactRedirectOverride ?? `${url}/interact/${id}`,
+          finish: interactNonce,
+        },
         continue: {
           access_token: { value: FAKE_CONTINUE_TOKEN },
           uri: options.continueUriOverride ?? `${url}/auth/continue/${id}`,
@@ -178,7 +186,14 @@ export async function createFakeOpenPayments(
           access_token: { value: "next-token" },
           uri: `${url}/auth/continue/${id}`,
         },
-        subject: { sub_ids: [{ id: `${url}${options.verifiedPath ?? "/alice"}`, format: "uri" }] },
+        subject: {
+          sub_ids: [
+            {
+              id: `${url}${options.verifiedPath ?? "/alice"}`,
+              format: options.subjectFormat ?? "uri",
+            },
+          ],
+        },
         ...(options.returnAccessToken
           ? {
               access_token: {
@@ -245,17 +260,17 @@ export async function createTestPrivateKeyFile(context: TestContext): Promise<st
   return path;
 }
 
-/** Authenticated SDK client over plain http with a throwaway key, like production minus https. */
-export async function createTestClient(
+/** The production gateway with a throwaway key, signing as a provider wallet that doesn't exist. */
+export async function createTestGateway(
   context: TestContext,
-  options: { walletAddressUrl?: string; requestTimeoutMs?: number } = {},
-): Promise<AuthenticatedClient> {
-  return createAuthenticatedClient({
-    walletAddressUrl: options.walletAddressUrl ?? "http://127.0.0.1:1/provider",
+  outbound: OutboundPolicy,
+  options: { requestTimeoutMs?: number } = {},
+): Promise<SdkOpenPaymentsGateway> {
+  return SdkOpenPaymentsGateway.create({
+    walletAddressUrl: "http://127.0.0.1:1/provider",
     keyId: "test-key",
     privateKey: await createTestPrivateKeyFile(context),
-    useHttp: true,
     requestTimeoutMs: options.requestTimeoutMs ?? 5000,
-    logLevel: "silent",
+    outbound,
   });
 }

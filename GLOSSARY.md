@@ -21,3 +21,8 @@ The rule for which hosts the provider may contact, and over which scheme: wallet
 public hosts only, credentials only to allowlisted auth server origins, browsers only to safe
 redirects.
 _Avoid_: SSRF filter, egress rules
+
+**Open Payments gateway**:
+What makes every request the provider sends to wallet addresses and auth servers, and refuses any
+the outbound policy doesn't allow.
+_Avoid_: SDK wrapper, client
