@@ -14,7 +14,9 @@
     "test": "node --conditions=source --test 'packages/*/test/**/*.test.ts' 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
     "generate-jwks": "node --conditions=source packages/server/src/generate-jwks.ts",
-    "sample-client": "node examples/sample-client.ts"
+    "sample-client": "node examples/sample-client.ts",
+    "build": "pnpm -r build",
+    "smoke": "node --conditions=source scripts/smoke-pack.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",

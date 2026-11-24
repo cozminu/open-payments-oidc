@@ -13,6 +13,11 @@
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "bin": {
     "open-payments-oidc": "dist/bin.js",
     "open-payments-oidc-generate-jwks": "dist/generate-jwks.js"
@@ -20,5 +25,9 @@
   "dependencies": {
     "@open-payments-oidc/oidc": "workspace:*",
     "@open-payments-oidc/wallet-login": "workspace:*"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "cp ../../LICENSE LICENSE"
   }
 }

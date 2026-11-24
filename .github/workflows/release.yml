@@ -34,3 +34,32 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: pnpm
+          registry-url: https://registry.npmjs.org
+      - run: pnpm install --frozen-lockfile
+      - name: Check the tag matches every package version
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          for dir in packages/*; do
+            version="$(node -p "require('./$dir/package.json').version")"
+            if [ "$version" != "$tag" ]; then
+              echo "$dir is at $version but the tag is $GITHUB_REF_NAME" >&2
+              exit 1
+            fi
+          done
+      - run: pnpm -r build
+      - run: pnpm -r publish --access public --no-git-checks --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

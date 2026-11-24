@@ -14,5 +14,5 @@
     "skipLibCheck": true,
     "customConditions": ["source"]
   },
-  "include": ["packages/*/src", "packages/*/test", "test", "examples"]
+  "include": ["packages/*/src", "packages/*/test", "test", "examples", "scripts"]
 }

@@ -13,8 +13,17 @@
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@open-payments-oidc/wallet-login": "workspace:*",
     "oidc-provider": "^9.14.0"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "cp ../../LICENSE LICENSE"
   }
 }

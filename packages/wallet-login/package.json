@@ -13,8 +13,17 @@
       "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
   "dependencies": {
     "@interledger/open-payments": "^7.4.0",
     "pg": "^8.23.1"
+  },
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "prepack": "cp ../../LICENSE LICENSE"
   }
 }

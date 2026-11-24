@@ -10,3 +10,4 @@ config/op-private-key*
 .env.*
 !.env.example
 dist/
+packages/*/LICENSE

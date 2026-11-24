@@ -22,5 +22,7 @@ jobs:
       - run: pnpm exec prettier --check .
       - run: pnpm typecheck
       - run: pnpm test
+      - run: pnpm build
+      - run: pnpm smoke
       - name: Build image
         run: docker build -t open-payments-oidc .
