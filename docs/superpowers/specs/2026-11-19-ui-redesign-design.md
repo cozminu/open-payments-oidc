@@ -129,7 +129,7 @@ Neutral, developer-tool look, clearly not the provider:
 
 ## Tests
 
-Existing tests match on page copy (for example `test/http/views.test.ts` and
+Existing tests match on page copy (for example `packages/oidc/test/views.test.ts` and
 `test/examples/sample-client.test.ts` look for "Sign in with your wallet address", "Signed in",
 "Not signed in", the logout form's action and `xsrf`). Update them to the new copy where it
 changes; don't weaken what they check (escaping, the form posting to the right URL, the claims

@@ -97,7 +97,7 @@ refuse.
   whose host resolves to loopback, and expect it to reject. The fake is in
   `test/support/fake-open-payments.ts`.
 - The test-app based tests run with `allowHttp: true` against fakes on 127.0.0.1 and don't go
-  through `main()`, so they're unaffected. `test/main.test.ts` is the exception. Its third test
+  through `main()`, so they're unaffected. `packages/server/test/bin.test.ts` is the exception. Its third test
   calls `main()` without `ALLOW_HTTP` and then uses global fetch to reach
   `http://127.0.0.1:<port>/healthz`, `/readyz` and discovery. The filter would refuse those. Set
   `ALLOW_HTTP: "true"` in that test, since it's about startup and not SSRF. Add a test that
@@ -307,15 +307,15 @@ The tests use PGlite (`test/support/db.ts`), so no real Postgres is needed.
 - Allows up to the limit, then blocks.
 - Separate keys count separately.
 - Two limiter instances on the same database share one count. Use the cross-replica pattern in
-  `test/e2e/login.test.ts` ("cross-replica") for an end-to-end version: two app instances, one
+  `packages/oidc/test/e2e/login.test.ts` ("cross-replica") for an end-to-end version: two app instances, one
   database, and the combined requests go over the limit.
 - A new window: insert a row with an old `window_start` directly, then check it doesn't count.
   Don't try to move the database clock.
 - No raw IP in the table: after a request, `rate_limits.key` doesn't contain the client IP.
 - Database error: a limiter whose query throws gives a 503 and a `rate_limit.failed` log line.
 - Cleanup deletes old windows and keeps the current one.
-- Migration test (`test/db/migrate.test.ts`): version 2 applies, and running it twice is a no-op.
-- Move the current tests in `test/http/rate-limit.test.ts` to the new class where they still
+- Migration test (`packages/wallet-login/test/migrations.test.ts`): version 2 applies, and running it twice is a no-op.
+- Move the current tests in `packages/oidc/test/rate-limit.test.ts` to the new class where they still
   apply. Keep the `clientIp` tests unchanged.
 
 ## Docs

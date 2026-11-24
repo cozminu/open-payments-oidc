@@ -35,7 +35,7 @@ same set. The sample client keeps its own shell and CSS in `examples/sample-clie
 - Light theme only.
 - Don't commit or create branches. The user hasn't asked for commits; each task ends with a
   green check instead.
-- Every task's check: `npx prettier --check . && npm run typecheck && npm test`, all passing.
+- Every task's check: `pnpm exec prettier --check . && pnpm typecheck && pnpm test`, all passing.
 
 Provider palette (from the spec):
 
@@ -73,13 +73,13 @@ errors.
 **Files:**
 - Modify: `packages/oidc/src/clients.ts` (type `ClientConfig`, `parseClient`)
 - Modify: `config/clients.example.json`, `README.md` (Clients file table)
-- Test: `test/config/clients.test.ts`
+- Test: `packages/oidc/test/clients.test.ts`
 
 **Interfaces:**
 - Produces: `ClientConfig.client_name?: string`. oidc-provider reads it as standard metadata and
   exposes it as `client.clientName`.
 
-- [ ] **Step 1: Write the failing tests** in `test/config/clients.test.ts`, inside the existing
+- [ ] **Step 1: Write the failing tests** in `packages/oidc/test/clients.test.ts`, inside the existing
   `describe("loadClients")`, next to the other cases:
 
 ```ts
@@ -107,7 +107,7 @@ test("rejects an empty or non-string client_name", () => {
 });
 ```
 
-- [ ] **Step 2: Run** `node --test test/config/clients.test.ts`. Expected: the two new tests FAIL.
+- [ ] **Step 2: Run** `node --conditions=@open-payments-oidc/source --test packages/oidc/test/clients.test.ts`. Expected: the two new tests FAIL.
 - [ ] **Step 3: Implement.** Add `client_name?: string` to `ClientConfig`. In `parseClient`,
   same pattern as `client_secret`: if `raw.client_name !== undefined`, require a non-empty
   string (error `` `${label} client_name must be a non-empty string` ``), then set it. Omit the
@@ -115,8 +115,8 @@ test("rejects an empty or non-string client_name", () => {
 - [ ] **Step 4: Docs.** Add `"client_name": "Example web app"` to the first client in
   `config/clients.example.json`. Add a README table row after `client_id`:
   `` `client_name` | no | Shown to users on the sign-in and logout pages. Default: the `client_id`. ``
-  (run `npm run format` to realign the table).
-- [ ] **Step 5: Check.** `npx prettier --check . && npm run typecheck && npm test`. Expected: all pass.
+  (run `pnpm format` to realign the table).
+- [ ] **Step 5: Check.** `pnpm exec prettier --check . && pnpm typecheck && pnpm test`. Expected: all pass.
 
 ---
 
@@ -128,7 +128,7 @@ test("rejects an empty or non-string client_name", () => {
 - Modify: `packages/oidc/src/interaction.ts` (`show`, `submit` pass `appName`; `sendHtml` uses
   `SECURITY_HEADERS`)
 - Modify: `packages/oidc/src/provider.ts` (`renderError` sets `SECURITY_HEADERS`)
-- Test: `test/http/views.test.ts`, `test/e2e/login.test.ts`, `test/examples/sample-client.test.ts`
+- Test: `packages/oidc/test/views.test.ts`, `packages/oidc/test/e2e/login.test.ts`, `test/examples/sample-client.test.ts`
 
 **Interfaces:**
 - Consumes: `ClientConfig.client_name` (Task 1).
@@ -143,7 +143,7 @@ test("rejects an empty or non-string client_name", () => {
   - `renderErrorPage(message: string, title = "Something went wrong"): string` (unchanged signature)
   - `function page(title: string, body: string): string` (private shell; Task 3 reuses it)
 
-- [ ] **Step 1: Write the failing view tests** in `test/http/views.test.ts`. Change the existing
+- [ ] **Step 1: Write the failing view tests** in `packages/oidc/test/views.test.ts`. Change the existing
   login test to pass `appName: "<i>App</i>"` and replace its `/Sign in with your wallet address/`
   assertion. Add the others:
 
@@ -194,7 +194,7 @@ test("appNameOf prefers client_name and falls back to client_id", () => {
 });
 ```
 
-- [ ] **Step 2: Write the failing e2e test** in `test/e2e/login.test.ts`, and replace the two
+- [ ] **Step 2: Write the failing e2e test** in `packages/oidc/test/e2e/login.test.ts`, and replace the two
   `/Sign in with your wallet address/` assertions there (lines 28 and 116) with
   `/name="wallet_address"/`. Do the same in the `signIn` helper of
   `test/examples/sample-client.test.ts`.
@@ -224,7 +224,7 @@ test("oidc-provider error pages get our headers", async (t) => {
 
   (Import `WEB_CLIENT`, `SPA_CLIENT` from `../support/test-app.ts`.)
 
-- [ ] **Step 3: Run** `node --test test/http/views.test.ts test/e2e/login.test.ts`. Expected:
+- [ ] **Step 3: Run** `node --conditions=@open-payments-oidc/source --test packages/oidc/test/views.test.ts packages/oidc/test/e2e/login.test.ts`. Expected:
   the new and edited tests FAIL (missing export `appNameOf`, missing `appName` copy, no CSP on
   the error page).
 
@@ -250,7 +250,7 @@ test("oidc-provider error pages get our headers", async (t) => {
   (a private helper on `InteractionHandlers`, used by both). In `provider.ts` `renderError`:
   `ctx.set({ ...SECURITY_HEADERS, "cache-control": "no-store" })` before setting the body.
 
-- [ ] **Step 6: Run the check.** `npx prettier --check . && npm run typecheck && npm test`. Expected: all pass.
+- [ ] **Step 6: Run the check.** `pnpm exec prettier --check . && pnpm typecheck && pnpm test`. Expected: all pass.
 
 - [ ] **Step 7: Visual check.** Render the pages to files and compare with
   `provider-screens.html` at desktop width and at 375px:
@@ -273,7 +273,7 @@ writeFileSync("/tmp/ui/error.html", renderErrorPage("This login expired or was a
 **Files:**
 - Modify: `packages/oidc/src/views.ts` (two new renderers)
 - Modify: `packages/oidc/src/provider.ts` (`features.rpInitiatedLogout`)
-- Test: `test/http/views.test.ts`, create `test/e2e/logout.test.ts`
+- Test: `packages/oidc/test/views.test.ts`, create `packages/oidc/test/e2e/logout.test.ts`
 
 **Interfaces:**
 - Consumes: `page`, `SECURITY_HEADERS`, `appNameOf`, button classes (Task 2).
@@ -296,7 +296,7 @@ Buttons: primary `<button type="submit" form="op.logoutForm" name="logout" value
 secondary `<button type="submit" form="op.logoutForm" class="button secondary">` (no name, so
 oidc-provider keeps the provider session). Check icon uses the teal tint `#d8eeec` / `#1f7f7c`.
 
-- [ ] **Step 1: Write the failing view tests** in `test/http/views.test.ts`:
+- [ ] **Step 1: Write the failing view tests** in `packages/oidc/test/views.test.ts`:
 
 ```ts
 const FORM = '<form id="op.logoutForm" method="post" action="/session/end/confirm"><input type="hidden" name="xsrf" value="abc"/></form>';
@@ -327,7 +327,7 @@ test("signed-out page has a variant per case", () => {
 
   (Fixed copy is written with literal apostrophes; only dynamic values go through `escapeHtml`.)
 
-- [ ] **Step 2: Write the failing e2e tests** in a new `test/e2e/logout.test.ts`. Use
+- [ ] **Step 2: Write the failing e2e tests** in a new `packages/oidc/test/e2e/logout.test.ts`. Use
   `app.login()` (returns `jar`), then drive `/session/end` with that jar. `WEB_CLIENT` has no
   `post_logout_redirect_uris`, so the success page is ours to render. Helper at the top:
   `confirm(app, jar, query)` that GETs `${app.url}/session/end?${query}`, asserts 200, and
@@ -349,7 +349,7 @@ test("signed-out page has a variant per case", () => {
     `content-security-policy` header is either absent or contains `script-src`. Never our
     policy.
 
-- [ ] **Step 3: Run** `node --test test/http/views.test.ts test/e2e/logout.test.ts`. Expected:
+- [ ] **Step 3: Run** `node --conditions=@open-payments-oidc/source --test packages/oidc/test/views.test.ts packages/oidc/test/e2e/logout.test.ts`. Expected:
   new tests FAIL (missing exports; default oidc-provider pages).
 
 - [ ] **Step 4: Implement** `renderLogoutPage` and `renderSignedOutPage` in `views.ts` with
@@ -360,7 +360,7 @@ test("signed-out page has a variant per case", () => {
   `ctx.body = render…({ …, appName: appNameOf(ctx.oidc.client) })`. Leave the auto-submit path
   alone (oidc-provider never calls `logoutSource` there).
 
-- [ ] **Step 5: Run the check.** `npx prettier --check . && npm run typecheck && npm test`. The
+- [ ] **Step 5: Run the check.** `pnpm exec prettier --check . && pnpm typecheck && pnpm test`. The
   existing `"logout ends the provider session and returns home"` sample-client test must still
   pass unchanged, since it parses the form `action` and `xsrf` out of our page.
 
@@ -425,14 +425,14 @@ assert.match(page.html, /Log out/);
   `"unknown path is 404"`: the body matches `/Back to home/`. (`wallet` contains `.` and `/`,
   which are fine unescaped in these regexes because they only widen the match.)
 
-- [ ] **Step 2: Run** `node --test test/examples/sample-client.test.ts`. Expected: the edited
+- [ ] **Step 2: Run** `node --conditions=@open-payments-oidc/source --test test/examples/sample-client.test.ts`. Expected: the edited
   assertions FAIL.
 - [ ] **Step 3: Implement** the shell, pages, `claimsTable` and `formatUtc` per the content
   list above. Palette from Global Constraints. System fonts, monospace for values.
-- [ ] **Step 4: Run the check.** `npx prettier --check . && npm run typecheck && npm test`. Expected: all pass.
+- [ ] **Step 4: Run the check.** `pnpm exec prettier --check . && pnpm typecheck && pnpm test`. Expected: all pass.
 - [ ] **Step 5: Visual check.** Temporarily add
   `writeFileSync("/tmp/ui/sample-signed-in.html", page.html)` to the full-login test, run it,
-  remove the line. Also `npm run sample-client` and open `http://localhost:5173/` and
+  remove the line. Also `pnpm sample-client` and open `http://localhost:5173/` and
   `/callback?state=x`. Compare with `sample-client.html`, including at 375px (claims table
   values wrap, no horizontal scroll).
 
@@ -440,7 +440,7 @@ assert.match(page.html, /Log out/);
 
 ## Final check
 
-- [ ] `npx prettier --check . && npm run typecheck && npm test`: all pass.
+- [ ] `pnpm exec prettier --check . && pnpm typecheck && pnpm test`: all pass.
 - [ ] `grep -n "<script" packages/oidc/src/views.ts examples/sample-client.ts`: no output.
 - [ ] `git status`: only the files listed in the tasks changed, plus the spec and this plan.
   Nothing committed.
