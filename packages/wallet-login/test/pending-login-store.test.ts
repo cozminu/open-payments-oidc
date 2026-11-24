@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Db } from "../src/db.ts";
 import {
   memoryStore,
+  memoryStoreSize,
   postgresStore,
   type PendingLogin,
   type PendingLoginStore,
@@ -143,4 +144,15 @@ test("postgres: an unreachable connection string rejects with the connection err
     postgresStore({ database: "postgres://127.0.0.1:1/none", cleanup: false }),
     /ECONNREFUSED|connect/,
   );
+});
+
+test("memory: save evicts expired entries", async () => {
+  let now = 1_000_000;
+  const store = memoryStore({ now: () => now });
+  await store.save("a", login(), 60);
+  now += 61_000;
+  await store.save("b", login(), 60);
+  assert.equal(memoryStoreSize(store), 1);
+  assert.equal(await store.take("a"), undefined);
+  assert.ok(await store.take("b"));
 });

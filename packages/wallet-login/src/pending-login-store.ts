@@ -22,13 +22,25 @@ export type PendingLoginStore = {
 
 const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 
+const memoryEntries = new WeakMap<PendingLoginStore, Map<string, unknown>>();
+
+/** Entries held by a `memoryStore`, expired ones included. For tests. */
+export function memoryStoreSize(store: PendingLoginStore): number | undefined {
+  return memoryEntries.get(store)?.size;
+}
+
 /** In-process store for single-instance deployments and tests. Entries die with the process. */
 export function memoryStore(options: { now?: () => number } = {}): PendingLoginStore {
   const now = options.now ?? Date.now;
   const entries = new Map<string, { login: PendingLogin; expiresAt: number }>();
-  return {
+  const store: PendingLoginStore = {
     async save(id, login, ttlSeconds) {
-      entries.set(id, { login: { ...login }, expiresAt: now() + ttlSeconds * 1000 });
+      // Sweep on write so abandoned logins can't pile up; no timer to manage.
+      const current = now();
+      for (const [key, entry] of entries) {
+        if (entry.expiresAt <= current) entries.delete(key);
+      }
+      entries.set(id, { login: { ...login }, expiresAt: current + ttlSeconds * 1000 });
     },
     async take(id) {
       const entry = entries.get(id);
@@ -37,6 +49,8 @@ export function memoryStore(options: { now?: () => number } = {}): PendingLoginS
       return entry.login;
     },
   };
+  memoryEntries.set(store, entries);
+  return store;
 }
 
 export async function postgresStore(options: {
