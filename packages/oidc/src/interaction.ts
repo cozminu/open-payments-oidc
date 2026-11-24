@@ -2,11 +2,10 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import { errors } from "oidc-provider";
 import type Provider from "oidc-provider";
 import type { InteractionResults } from "oidc-provider";
-import type { Logger } from "@open-payments-oidc/wallet-login/internal";
-import { callbackParamsFrom, type WalletVerifier } from "@open-payments-oidc/wallet-login/internal";
+import type { Logger, WalletLogin } from "@open-payments-oidc/wallet-login";
 import { appNameOf, renderErrorPage, renderLoginPage, SECURITY_HEADERS } from "./views.ts";
 
-export type InteractionDeps = { provider: Provider; verifier: WalletVerifier; log: Logger };
+export type InteractionDeps = { provider: Provider; walletLogin: WalletLogin; log: Logger };
 
 type Interaction = Awaited<ReturnType<Provider["interactionDetails"]>>;
 
@@ -19,12 +18,12 @@ const WRONG_PROMPT = "unexpected interaction prompt";
 /** The login interaction: wallet address form, wallet redirect, and the wallet's callback. */
 export class InteractionHandlers {
   private readonly provider: Provider;
-  private readonly verifier: WalletVerifier;
+  private readonly walletLogin: WalletLogin;
   private readonly log: Logger;
 
   constructor(deps: InteractionDeps) {
     this.provider = deps.provider;
-    this.verifier = deps.verifier;
+    this.walletLogin = deps.walletLogin;
     this.log = deps.log;
   }
 
@@ -41,6 +40,13 @@ export class InteractionHandlers {
 
   /** POST /interaction/:uid with form field `wallet_address`. */
   async submit(req: IncomingMessage, res: ServerResponse, uid: string): Promise<void> {
+    // An app that mounts us after a body parser has already consumed the form; waiting for more
+    // data would hang the request.
+    if (req.readableEnded) {
+      this.log.warn("interaction.body_consumed");
+      sendHtml(res, 400, renderErrorPage("That request couldn't be read."));
+      return;
+    }
     const body = await readBody(req, MAX_FORM_BYTES);
     if (body === undefined) {
       sendHtml(res, 413, renderErrorPage("That request was too large.", "Request too large"));
@@ -53,7 +59,9 @@ export class InteractionHandlers {
       return;
     }
     const walletAddress = new URLSearchParams(body).get("wallet_address") ?? "";
-    const outcome = await this.verifier.start(uid, walletAddress, this.callbackUrl(uid));
+    const outcome = await this.walletLogin.start(walletAddress, this.callbackUrl(uid), {
+      loginId: uid,
+    });
     switch (outcome.kind) {
       case "redirect":
         res.writeHead(303, { location: outcome.redirectUrl, "cache-control": "no-store" });
@@ -95,7 +103,7 @@ export class InteractionHandlers {
       await this.refusePrompt(req, res, interaction);
       return;
     }
-    const outcome = await this.verifier.finish(uid, callbackParamsFrom(query));
+    const outcome = await this.walletLogin.finish(uid, query);
     switch (outcome.kind) {
       case "verified":
         // The only place a login result is produced: after the wallet confirmed the address.

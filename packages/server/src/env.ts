@@ -1,4 +1,5 @@
-import { parseAuthServerAllowlist } from "@open-payments-oidc/wallet-login/internal";
+import { parseIssuer } from "@open-payments-oidc/oidc";
+import { parseAuthServerAllowlist } from "@open-payments-oidc/wallet-login";
 
 export type Config = {
   issuer: string;
@@ -66,7 +67,7 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
       .filter((item) => item !== "");
   }
 
-  const issuer = parseIssuer(required("ISSUER"), errors);
+  const issuer = parseIssuer(required("ISSUER"), errors, "ISSUER");
   const port = integer("PORT", 3000, 1, 65535);
   const databaseUrl = required("DATABASE_URL");
   const opWalletAddress = required("OP_WALLET_ADDRESS");
@@ -111,22 +112,4 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
     rateLimitPerMinute,
     outboundTimeoutMs,
   };
-}
-
-// Routing, cookie paths and the interaction callback URL are all anchored at the root, so the
-// issuer has to be an origin. A trailing slash is stripped so it matches the `iss` clients compare.
-function parseIssuer(raw: string, errors: string[]): string {
-  if (raw === "") return "";
-  const problem = (why: string): string => {
-    errors.push(`ISSUER ${JSON.stringify(raw)} ${why}`);
-    return "";
-  };
-  if (!URL.canParse(raw)) return problem("is not a valid URL");
-  const url = new URL(raw);
-  if (url.protocol !== "https:" && url.protocol !== "http:") return problem("must be http(s)");
-  if (url.username || url.password) return problem("must not contain credentials");
-  if (url.pathname !== "/" || url.search !== "" || url.hash !== "" || raw.includes("?")) {
-    return problem("must be a root URL: no path, query or fragment (the provider is served at /)");
-  }
-  return url.origin;
 }

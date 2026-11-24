@@ -85,7 +85,7 @@ export type SdkOpenPaymentsGatewayOptions = {
   /** The provider's own wallet address, which auth servers know our key by. */
   readonly walletAddressUrl: string;
   readonly keyId: string;
-  /** Path to the Ed25519 private key (PEM), or the key itself. */
+  /** The Ed25519 private key, as a KeyObject or PEM text. Never a file path. */
   readonly privateKey: string | KeyObject;
   readonly requestTimeoutMs: number;
   readonly outbound: OutboundPolicy;

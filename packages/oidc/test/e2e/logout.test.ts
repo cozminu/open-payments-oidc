@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { CookieJar, SPA_CLIENT, startTestApp, WEB_CLIENT } from "../support/test-app.ts";
+import {
+  CookieJar,
+  SPA_CLIENT,
+  startTestApp,
+  WEB_CLIENT,
+} from "../../../../test/support/test-app.ts";
 
 const CSP = "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'";
 

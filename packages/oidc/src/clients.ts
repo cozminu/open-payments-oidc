@@ -12,7 +12,8 @@ export type ClientConfig = {
 
 const AUTH_METHODS = ["client_secret_basic", "client_secret_post", "none"];
 
-export function loadClients(path: string): ClientConfig[] {
+/** Reads and validates a clients file (a JSON array). */
+export function readClientsFile(path: string): ClientConfig[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -24,9 +25,14 @@ export function loadClients(path: string): ClientConfig[] {
   if (!Array.isArray(parsed)) {
     throw new Error(`Clients file ${path} must contain a JSON array`);
   }
+  return validateClients(parsed);
+}
 
+/** Validates client configs, throwing on the first problem. `label` names the value in errors. */
+export function validateClients(value: unknown, label = "clients"): ClientConfig[] {
+  if (!Array.isArray(value)) throw new Error(`${label} must be an array`);
   const seen = new Set<string>();
-  return parsed.map((entry: unknown, index: number) => {
+  return value.map((entry: unknown, index: number) => {
     const client = parseClient(entry, index);
     if (seen.has(client.client_id)) {
       throw new Error(`Duplicate client_id ${JSON.stringify(client.client_id)}`);

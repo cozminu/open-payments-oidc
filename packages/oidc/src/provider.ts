@@ -2,7 +2,7 @@ import type { JsonWebKey } from "node:crypto";
 import Provider from "oidc-provider";
 import type { ClientMetadata, JWKS } from "oidc-provider";
 import type { ClientConfig } from "./clients.ts";
-import type { Db, Logger } from "@open-payments-oidc/wallet-login/internal";
+import type { Db, Logger } from "@open-payments-oidc/wallet-login";
 import { createAdapterFactory } from "./oidc-adapter.ts";
 import {
   appNameOf,

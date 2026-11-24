@@ -1,13 +1,13 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import * as oidc from "openid-client";
-import { createTestDb } from "../support/db.ts";
-import type { FakeOptions } from "../support/fake-open-payments.ts";
+import { createTestDb } from "../../../../test/support/db.ts";
+import type { FakeOptions } from "../../../../test/support/fake-open-payments.ts";
 import {
   FAKE_CONTINUE_TOKEN,
   FAKE_INTERACT_REF,
   FAKE_ISSUED_TOKEN,
-} from "../support/fake-open-payments.ts";
+} from "../../../../test/support/fake-open-payments.ts";
 import {
   CookieJar,
   follow,
@@ -16,7 +16,7 @@ import {
   SPA_CLIENT,
   startTestApp,
   WEB_CLIENT,
-} from "../support/test-app.ts";
+} from "../../../../test/support/test-app.ts";
 
 const EXPIRED_COPY = "This login expired or was already used. Start again from the app.";
 
@@ -297,20 +297,6 @@ test("cross-replica", async (t) => {
     line.msg === "login.finish" && line.outcome === "verified";
   assert.ok(b.logs.some(verified));
   assert.ok(!a.logs.some(verified));
-});
-
-test("healthz and readyz", async (t) => {
-  const db = await createTestDb();
-  const app = await startTestApp(t, { db });
-  const health = await fetch(`${app.url}/healthz`);
-  assert.equal(health.status, 200);
-  assert.equal(await health.text(), "ok");
-  const ready = await fetch(`${app.url}/readyz`);
-  assert.equal(ready.status, 200);
-  await db.close();
-  const notReady = await fetch(`${app.url}/readyz`);
-  assert.equal(notReady.status, 503);
-  await notReady.body?.cancel();
 });
 
 test("wrong method on an interaction route is refused", async (t) => {

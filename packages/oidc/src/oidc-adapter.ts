@@ -1,5 +1,5 @@
 import type { Adapter, AdapterPayload } from "oidc-provider";
-import type { Db } from "@open-payments-oidc/wallet-login/internal";
+import type { Db } from "@open-payments-oidc/wallet-login";
 
 type Row = { payload: AdapterPayload; consumed: number | null };
 

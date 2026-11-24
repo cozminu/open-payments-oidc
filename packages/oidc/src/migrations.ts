@@ -1,4 +1,4 @@
-import { migrate, type Db, type Migration } from "@open-payments-oidc/wallet-login/internal";
+import { migrate, type Db, type Migration } from "@open-payments-oidc/wallet-login";
 
 // One statement per entry: PGlite's extended protocol rejects multi-statement strings.
 const OIDC_MIGRATIONS: readonly Migration[] = [

@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
 import { generateJwks } from "../src/generate-jwks.ts";
-import { loadJwks } from "../../oidc/src/keys.ts";
+import { readJwksFile } from "../../oidc/src/keys.ts";
 
 function writeTemp(t: { after(fn: () => void): void }, content: string): string {
   const dir = mkdtempSync(join(tmpdir(), "jwks-test-"));
@@ -49,14 +49,14 @@ describe("generateJwks", () => {
     assert.notEqual(ec.kid, rsa.kid);
   });
 
-  test("output is accepted by loadJwks", (t) => {
+  test("output is accepted by readJwksFile", (t) => {
     const path = writeTemp(t, JSON.stringify(generateJwks({ ec: true })));
-    assert.equal(loadJwks(path).keys.length, 2);
+    assert.equal(readJwksFile(path).keys.length, 2);
   });
 });
 
 describe("generate-jwks CLI", () => {
-  test("prints JSON to stdout that loadJwks accepts", (t) => {
+  test("prints JSON to stdout that readJwksFile accepts", (t) => {
     const out = execFileSync(
       "node",
       ["--conditions=source", "packages/server/src/generate-jwks.ts", "--ec"],
@@ -64,7 +64,7 @@ describe("generate-jwks CLI", () => {
     );
     const parsed = JSON.parse(out) as { keys: unknown[] };
     assert.equal(parsed.keys.length, 2);
-    assert.equal(loadJwks(writeTemp(t, out)).keys.length, 2);
+    assert.equal(readJwksFile(writeTemp(t, out)).keys.length, 2);
   });
 
   test("rejects unknown flags", () => {

@@ -1,29 +1,15 @@
-import type { Server } from "node:http";
+import { readFileSync } from "node:fs";
+import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import {
-  createApp,
-  createOidcProvider,
-  deleteExpiredOidcModels,
-  loadClients,
-  loadJwks,
-  migrateOidc,
-  RateLimiter,
-} from "@open-payments-oidc/oidc/internal";
-import {
-  createLogger,
-  createPgDb,
-  deleteExpiredPendingLogins,
-  migrateWalletLogin,
-  OutboundPolicy,
-  postgresStore,
-  SdkOpenPaymentsGateway,
-  WalletVerifier,
-  type Db,
-  type Logger,
-} from "@open-payments-oidc/wallet-login/internal";
+  createOidcHandler,
+  readClientsFile,
+  readJwksFile,
+  type OidcHandler,
+} from "@open-payments-oidc/oidc";
+import { createLogger, createPgDb, type Db, type Logger } from "@open-payments-oidc/wallet-login";
 import { loadConfig } from "./env.ts";
 
-const CLEANUP_INTERVAL_MS = 10 * 60 * 1000;
 const SHUTDOWN_GRACE_MS = 8000;
 
 export type Running = {
@@ -41,52 +27,45 @@ export async function main(
 ): Promise<Running> {
   const log = createLogger();
   const config = loadConfig(env);
-  const clients = loadClients(config.clientsFile);
-  const jwks = loadJwks(config.jwksFile);
+  const clients = readClientsFile(config.clientsFile);
+  const jwks = readJwksFile(config.jwksFile);
 
   const db = (deps.createDb ?? createPgDb)(config.databaseUrl, log);
-  let timer: NodeJS.Timeout | undefined;
+  let handler: OidcHandler | undefined;
   let app: Server | undefined;
   try {
-    await migrateWalletLogin(db);
-    await migrateOidc(db);
-    log.info("db.migrated");
-
-    const outbound = new OutboundPolicy({
-      allowHttp: config.allowHttp,
-      authServerOrigins: config.authServerAllowlist,
-    });
-    const gateway = await SdkOpenPaymentsGateway.create({
-      walletAddressUrl: config.opWalletAddress,
-      keyId: config.opKeyId,
-      privateKey: config.opPrivateKeyPath,
-      requestTimeoutMs: config.outboundTimeoutMs,
-      outbound,
-    });
-    const verifier = new WalletVerifier({
-      gateway,
-      store: await postgresStore({ database: db, cleanup: false, log }),
-      log,
-    });
-    const provider = createOidcProvider({
-      settings: {
-        issuer: config.issuer,
-        cookieKeys: config.cookieKeys,
-        sessionTtlSeconds: config.sessionTtlSeconds,
-        trustProxy: config.trustProxy,
-      },
+    handler = await createOidcHandler({
+      issuer: config.issuer,
       clients,
       jwks,
-      db,
-      log,
-    });
-    app = createApp({
-      provider,
-      verifier,
-      db,
-      rateLimiter: new RateLimiter({ limitPerMinute: config.rateLimitPerMinute }),
+      cookieKeys: config.cookieKeys,
+      sessionTtlSeconds: config.sessionTtlSeconds,
+      database: db,
+      wallet: {
+        address: config.opWalletAddress,
+        keyId: config.opKeyId,
+        privateKey: readFileSync(config.opPrivateKeyPath, "utf8"),
+      },
+      authServerAllowlist: config.authServerAllowlist,
+      allowHttp: config.allowHttp,
+      outboundTimeoutMs: config.outboundTimeoutMs,
+      rateLimitPerMinute: config.rateLimitPerMinute,
       trustProxy: config.trustProxy,
       log,
+    });
+    const oidc = handler;
+    app = createServer((req, res) => {
+      const path = (req.url ?? "/").split("?")[0];
+      if (path === "/healthz") {
+        if (allowMethod(res, req)) sendText(res, 200, "ok");
+      } else if (path === "/readyz") {
+        if (!allowMethod(res, req)) return;
+        void oidc
+          .ready()
+          .then((ready) => sendText(res, ready ? 200 : 503, ready ? "ok" : "unavailable"));
+      } else {
+        oidc.handler(req, res);
+      }
     });
 
     const listening = app;
@@ -100,17 +79,6 @@ export async function main(
     // After startup, server errors are logged rather than left to crash the process.
     listening.on("error", (error) => log.error("server.error", { error: error.message }));
 
-    timer = setInterval(() => {
-      Promise.all([deleteExpiredOidcModels(db), deleteExpiredPendingLogins(db)]).then(
-        ([oidcModels, pendingLogins]) => log.info("cleanup.done", { oidcModels, pendingLogins }),
-        (error: unknown) =>
-          log.error("cleanup.failed", {
-            error: error instanceof Error ? error.message : String(error),
-          }),
-      );
-    }, CLEANUP_INTERVAL_MS);
-    timer.unref();
-
     log.info("server.listening", {
       port: (listening.address() as AddressInfo).port,
       issuer: config.issuer,
@@ -121,7 +89,6 @@ export async function main(
     let closing: Promise<void> | undefined;
     const close = (): Promise<void> => {
       closing ??= (async () => {
-        clearInterval(timer);
         const stopped = new Promise<void>((resolve) => listening.close(() => resolve()));
         listening.closeIdleConnections();
         // Don't let a stuck connection hold shutdown past the usual orchestrator grace period.
@@ -129,6 +96,7 @@ export async function main(
         force.unref();
         await stopped;
         clearTimeout(force);
+        await oidc.close();
         await db.close();
         log.info("server.closed");
       })();
@@ -137,11 +105,26 @@ export async function main(
     return { close };
   } catch (error) {
     // Startup failed after something was opened: release it so the caller can exit or retry.
-    if (timer !== undefined) clearInterval(timer);
     if (app?.listening) await new Promise<void>((resolve) => app?.close(() => resolve()));
+    await handler?.close().catch(() => {});
     await db.close().catch(() => {});
     throw error;
   }
+}
+
+function allowMethod(res: ServerResponse, req: IncomingMessage): boolean {
+  if (req.method === "GET" || req.method === "HEAD") return true;
+  res.writeHead(405, { allow: "GET, HEAD", "content-type": "text/plain" });
+  res.end("method not allowed");
+  return false;
+}
+
+function sendText(res: ServerResponse, status: number, text: string): void {
+  res.writeHead(status, {
+    "content-type": "text/plain; charset=utf-8",
+    "cache-control": "no-store",
+  });
+  res.end(text);
 }
 
 async function run(): Promise<void> {

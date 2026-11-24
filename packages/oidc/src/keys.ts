@@ -1,7 +1,8 @@
 import { readFileSync } from "node:fs";
 import type { JsonWebKey } from "node:crypto";
 
-export function loadJwks(path: string): { keys: JsonWebKey[] } {
+/** Reads and validates a JWKS file. */
+export function readJwksFile(path: string): { keys: JsonWebKey[] } {
   let parsed: unknown;
   try {
     parsed = JSON.parse(readFileSync(path, "utf8"));
@@ -11,6 +12,15 @@ export function loadJwks(path: string): { keys: JsonWebKey[] } {
   const keys = (parsed as { keys?: unknown } | null)?.keys;
   if (!Array.isArray(keys)) {
     throw new Error(`JWKS file ${path} must be an object with a "keys" array`);
+  }
+  return validateJwks(parsed);
+}
+
+/** Validates a JWKS with private signing keys, throwing on the first problem. */
+export function validateJwks(value: unknown, label = "jwks"): { keys: JsonWebKey[] } {
+  const keys = (value as { keys?: unknown } | null)?.keys;
+  if (!Array.isArray(keys)) {
+    throw new Error(`${label} must be an object with a "keys" array`);
   }
 
   const seen = new Set<string>();

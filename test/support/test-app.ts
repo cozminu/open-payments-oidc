@@ -3,24 +3,12 @@ import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { TestContext } from "node:test";
 import * as oidc from "openid-client";
-import type Provider from "oidc-provider";
 import type { ClientConfig } from "../../packages/oidc/src/clients.ts";
-import type { Config } from "../../packages/server/src/env.ts";
+import { createOidcHandler, type OidcHandler } from "../../packages/oidc/src/index.ts";
 import type { Db } from "../../packages/wallet-login/src/db.ts";
-import { postgresStore } from "../../packages/wallet-login/src/pending-login-store.ts";
-import { createApp } from "../../packages/oidc/src/app.ts";
-import { RateLimiter } from "../../packages/oidc/src/rate-limit.ts";
 import { createLogger } from "../../packages/wallet-login/src/log.ts";
-import { createOidcProvider } from "../../packages/oidc/src/provider.ts";
-import { OutboundPolicy } from "../../packages/wallet-login/src/outbound.ts";
-import { WalletVerifier } from "../../packages/wallet-login/src/verifier.ts";
 import { createTestDb } from "./db.ts";
-import {
-  createFakeOpenPayments,
-  createTestGateway,
-  type Fake,
-  type FakeOptions,
-} from "./fake-open-payments.ts";
+import { createFakeOpenPayments, type Fake, type FakeOptions } from "./fake-open-payments.ts";
 
 export const REDIRECT_URI = "http://127.0.0.1:9999/callback";
 
@@ -152,7 +140,6 @@ export type TestApp = {
   issuer: string;
   fake: Fake;
   db: Db;
-  provider: Provider;
   /** Parsed form of `lines`, in order. */
   logs: LogLine[];
   /** Everything logged, exactly as written (one JSON object per line, no newline). */
@@ -186,43 +173,26 @@ export async function startTestApp(
   const ownsDb = options.db === undefined;
   const db = options.db ?? (await createTestDb());
 
-  // The issuer has to be the app's URL and is fixed when the provider is built, so listen first
-  // and hand requests to the app once it exists.
-  let app: ReturnType<typeof createApp> | undefined;
+  // The issuer has to be the app's URL and is fixed when the handler is built, so listen first
+  // and hand requests to the handler once it exists.
+  let op: OidcHandler | undefined;
   const server = createServer((req, res) => {
-    if (app === undefined) {
+    if (op === undefined) {
       res.writeHead(503).end();
       return;
     }
-    app.emit("request", req, res);
+    op.handler(req, res);
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   context.after(async () => {
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
+    await op?.close();
     if (ownsDb) await db.close();
   });
   const url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
   const issuer = options.issuer ?? url;
 
-  const config: Config = {
-    issuer,
-    port: 0,
-    databaseUrl: "unused",
-    opWalletAddress: "http://127.0.0.1:1/provider",
-    opKeyId: "test-key",
-    opPrivateKeyPath: "unused",
-    clientsFile: "unused",
-    jwksFile: "unused",
-    cookieKeys: COOKIE_KEYS,
-    sessionTtlSeconds: 3600,
-    authServerAllowlist: [fake.url],
-    allowHttp: true,
-    trustProxy: false,
-    rateLimitPerMinute: 1000,
-    outboundTimeoutMs: 5000,
-  };
-  const clients = options.clients ?? [WEB_CLIENT, SPA_CLIENT];
   const logs: LogLine[] = [];
   const lines: string[] = [];
   const log = createLogger({
@@ -231,31 +201,23 @@ export async function startTestApp(
       logs.push(JSON.parse(line) as LogLine);
     },
   });
-  const provider = createOidcProvider({
-    settings: config,
+  const clients = options.clients ?? [WEB_CLIENT, SPA_CLIENT];
+  op = await createOidcHandler({
+    issuer,
     clients,
     jwks: options.jwks ?? JWKS,
-    db,
-    log,
-  });
-  const outbound = new OutboundPolicy({
-    allowHttp: config.allowHttp,
-    authServerOrigins: config.authServerAllowlist,
-  });
-  const verifier = new WalletVerifier({
-    gateway: await createTestGateway(context, outbound),
-    store: await postgresStore({ database: db, cleanup: false }),
-    log,
-  });
-  app = createApp({
-    provider,
-    verifier,
-    db,
-    log,
+    cookieKeys: COOKIE_KEYS,
+    database: db,
+    wallet: {
+      address: "http://127.0.0.1:1/provider",
+      keyId: "test-key",
+      privateKey: generateKeyPairSync("ed25519").privateKey,
+    },
+    authServerAllowlist: [fake.url],
+    allowHttp: true,
     trustProxy: false,
-    ...(options.limitPerMinute === undefined
-      ? {}
-      : { rateLimiter: new RateLimiter({ limitPerMinute: options.limitPerMinute }) }),
+    rateLimitPerMinute: options.limitPerMinute ?? 1_000_000,
+    log,
   });
 
   async function clientConfig(choice: "web" | "spa" = "web"): Promise<oidc.Configuration> {
@@ -355,7 +317,7 @@ export async function startTestApp(
     return result;
   }
 
-  return { url, issuer, fake, db, provider, logs, lines, login, clientConfig };
+  return { url, issuer, fake, db, logs, lines, login, clientConfig };
 }
 
 /** Follows redirects like a browser until a page, or until the browser is sent to the client. */

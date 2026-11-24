@@ -3,7 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, test } from "node:test";
-import { loadClients } from "../src/clients.ts";
+import { readClientsFile } from "../src/clients.ts";
 
 function write(content: unknown): string {
   const dir = mkdtempSync(join(tmpdir(), "clients-"));
@@ -12,7 +12,7 @@ function write(content: unknown): string {
   return path;
 }
 
-describe("loadClients", () => {
+describe("readClientsFile", () => {
   test("reads public and confidential clients", () => {
     const path = write([
       {
@@ -27,7 +27,7 @@ describe("loadClients", () => {
         redirect_uris: ["http://localhost:5173/cb", "http://127.0.0.1:5173/cb"],
       },
     ]);
-    const clients = loadClients(path);
+    const clients = readClientsFile(path);
     assert.equal(clients.length, 2);
     assert.equal(clients[0]?.client_id, "web");
     assert.equal(clients[0]?.client_secret, "s3cret");
@@ -37,7 +37,7 @@ describe("loadClients", () => {
   });
 
   test("reads an optional client_name", () => {
-    const clients = loadClients(
+    const clients = readClientsFile(
       write([
         {
           client_id: "a",
@@ -56,7 +56,7 @@ describe("loadClients", () => {
     for (const client_name of ["", 42]) {
       assert.throws(
         () =>
-          loadClients(
+          readClientsFile(
             write([
               {
                 client_id: "a",
@@ -73,23 +73,23 @@ describe("loadClients", () => {
 
   test("rejects missing redirect_uris", () => {
     assert.throws(
-      () => loadClients(write([{ client_id: "a", client_secret: "x" }])),
+      () => readClientsFile(write([{ client_id: "a", client_secret: "x" }])),
       /redirect_uris/,
     );
     assert.throws(
-      () => loadClients(write([{ client_id: "a", client_secret: "x", redirect_uris: [] }])),
+      () => readClientsFile(write([{ client_id: "a", client_secret: "x", redirect_uris: [] }])),
       /redirect_uris/,
     );
   });
 
   test("rejects confidential client without client_secret", () => {
     assert.throws(
-      () => loadClients(write([{ client_id: "a", redirect_uris: ["https://a.example/cb"] }])),
+      () => readClientsFile(write([{ client_id: "a", redirect_uris: ["https://a.example/cb"] }])),
       /client_secret/,
     );
     assert.throws(
       () =>
-        loadClients(
+        readClientsFile(
           write([
             {
               client_id: "a",
@@ -104,7 +104,7 @@ describe("loadClients", () => {
 
   test("rejects duplicate client_id", () => {
     const client = { client_id: "a", client_secret: "x", redirect_uris: ["https://a.example/cb"] };
-    assert.throws(() => loadClients(write([client, client])), /duplicate.*a/i);
+    assert.throws(() => readClientsFile(write([client, client])), /duplicate.*a/i);
   });
 
   test("rejects insecure or malformed redirect URIs", () => {
@@ -115,7 +115,8 @@ describe("loadClients", () => {
       "myapp://cb",
     ]) {
       assert.throws(
-        () => loadClients(write([{ client_id: "a", client_secret: "x", redirect_uris: [uri] }])),
+        () =>
+          readClientsFile(write([{ client_id: "a", client_secret: "x", redirect_uris: [uri] }])),
         /redirect/i,
         uri,
       );
@@ -123,7 +124,7 @@ describe("loadClients", () => {
   });
 
   test("rejects non-array and invalid JSON", () => {
-    assert.throws(() => loadClients(write({ client_id: "a" })), /array/i);
-    assert.throws(() => loadClients(write("{nope")), /JSON/);
+    assert.throws(() => readClientsFile(write({ client_id: "a" })), /array/i);
+    assert.throws(() => readClientsFile(write("{nope")), /JSON/);
   });
 });
