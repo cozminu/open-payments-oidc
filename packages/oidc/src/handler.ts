@@ -6,6 +6,7 @@ import {
   migrateWalletLogin,
   openDatabase,
   parseAuthServerAllowlist,
+  parseOpWallet,
   postgresStore,
   silentLogger,
   type DatabaseInput,
@@ -97,6 +98,7 @@ export async function createOidcHandler(config: OidcHandlerConfig): Promise<Oidc
     );
   }
   parseAuthServerAllowlist(config.authServerAllowlist ?? [], allowHttp, errors);
+  parseOpWallet(config.wallet, errors);
   const clients = collect(errors, () => validateClients(config.clients));
   const jwks = collect(errors, () => validateJwks(config.jwks));
   if (errors.length > 0) throw new Error(`Invalid configuration:\n- ${errors.join("\n- ")}`);

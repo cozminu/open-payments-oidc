@@ -187,3 +187,15 @@ test("PEM text works as privateKey, and broken PEM is a config error", async (co
     /wallet\.privateKey is not a valid PEM private key/,
   );
 });
+
+test("a non-Ed25519 privateKey is a config error, as PEM or KeyObject", async (context) => {
+  const fake = await createFakeOpenPayments(context);
+  const { privateKey } = generateKeyPairSync("rsa", { modulusLength: 2048 });
+  const pem = privateKey.export({ type: "pkcs8", format: "pem" }) as string;
+  for (const key of [pem, privateKey]) {
+    await assert.rejects(
+      createWalletLogin(config(fake, memoryStore(), key)),
+      /wallet\.privateKey must be an Ed25519 private key/,
+    );
+  }
+});

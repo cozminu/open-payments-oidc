@@ -108,6 +108,7 @@ test("config errors are collected", async (context) => {
       cookieKeys: [],
       clients: [{ ...CLIENT, redirect_uris: ["http://app.example/callback"] }],
       jwks: { keys: [] },
+      wallet: { ...baseConfig("http://x", db).wallet, privateKey: "/secrets/op.pem" },
     }),
     (error: Error) => {
       assert.match(error.message, /^Invalid configuration:\n- /);
@@ -115,6 +116,7 @@ test("config errors are collected", async (context) => {
       assert.match(error.message, /cookieKeys/);
       assert.match(error.message, /redirect URI .*must be https/);
       assert.match(error.message, /at least one RSA private key/);
+      assert.match(error.message, /wallet\.privateKey must be PEM text or a KeyObject/);
       return true;
     },
   );

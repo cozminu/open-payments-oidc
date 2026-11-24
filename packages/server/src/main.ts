@@ -44,7 +44,7 @@ export async function main(
       wallet: {
         address: config.opWalletAddress,
         keyId: config.opKeyId,
-        privateKey: readFileSync(config.opPrivateKeyPath, "utf8"),
+        privateKey: readPrivateKey(config.opPrivateKeyPath),
       },
       authServerAllowlist: config.authServerAllowlist,
       allowHttp: config.allowHttp,
@@ -109,6 +109,15 @@ export async function main(
     await handler?.close().catch(() => {});
     await db.close().catch(() => {});
     throw error;
+  }
+}
+
+function readPrivateKey(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
+    throw new Error(`OP_PRIVATE_KEY_PATH ${JSON.stringify(path)} could not be read (${code})`);
   }
 }
 

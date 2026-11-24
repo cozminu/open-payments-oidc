@@ -1,5 +1,6 @@
 export {
   createWalletLogin,
+  parseOpWallet,
   type OpWallet,
   type WalletLogin,
   type WalletLoginConfig,

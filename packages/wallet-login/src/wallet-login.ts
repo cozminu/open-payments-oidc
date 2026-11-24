@@ -61,9 +61,7 @@ export async function createWalletLogin(config: WalletLoginConfig): Promise<Wall
   const outboundTimeoutMs = config.outboundTimeoutMs ?? 5000;
   const loginTtlSeconds = config.loginTtlSeconds ?? 600;
 
-  if (!config.wallet?.address) errors.push("wallet.address is required");
-  if (!config.wallet?.keyId) errors.push("wallet.keyId is required");
-  const privateKey = parsePrivateKey(config.wallet?.privateKey, errors);
+  const privateKey = parseOpWallet(config.wallet, errors);
   const origins = parseAuthServerAllowlist(config.authServerAllowlist ?? [], allowHttp, errors);
   if (!isIntegerBetween(outboundTimeoutMs, 1, 600_000)) {
     errors.push(
@@ -115,6 +113,16 @@ export async function createWalletLogin(config: WalletLoginConfig): Promise<Wall
   };
 }
 
+/** Checks the wallet identity and returns the parsed key. Problems are pushed onto `errors`. */
+export function parseOpWallet(
+  wallet: OpWallet | undefined,
+  errors: string[],
+): KeyObject | undefined {
+  if (!wallet?.address) errors.push("wallet.address is required");
+  if (!wallet?.keyId) errors.push("wallet.keyId is required");
+  return parsePrivateKey(wallet?.privateKey, errors);
+}
+
 function isIntegerBetween(value: unknown, min: number, max: number): boolean {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= min && value <= max;
 }
@@ -126,19 +134,28 @@ function parsePrivateKey(
   errors: string[],
 ): KeyObject | undefined {
   const mustBePem = "wallet.privateKey must be PEM text or a KeyObject";
+  const mustBeEd25519 = "wallet.privateKey must be an Ed25519 private key";
+  let key: KeyObject;
   if (typeof raw === "string") {
     if (!raw.includes("-----BEGIN ")) {
       errors.push(mustBePem);
       return undefined;
     }
     try {
-      return createPrivateKey(raw);
+      key = createPrivateKey(raw);
     } catch {
       errors.push("wallet.privateKey is not a valid PEM private key");
       return undefined;
     }
+  } else if (raw !== null && typeof raw === "object" && raw.type === "private") {
+    key = raw;
+  } else {
+    errors.push(mustBePem);
+    return undefined;
   }
-  if (raw !== null && typeof raw === "object" && raw.type === "private") return raw;
-  errors.push(mustBePem);
-  return undefined;
+  if (key.asymmetricKeyType !== "ed25519") {
+    errors.push(mustBeEd25519);
+    return undefined;
+  }
+  return key;
 }
