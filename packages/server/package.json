@@ -1,0 +1,13 @@
+{
+  "name": "@open-payments-oidc/server",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "dependencies": {
+    "@open-payments-oidc/oidc": "workspace:*",
+    "@open-payments-oidc/wallet-login": "workspace:*"
+  }
+}

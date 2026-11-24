@@ -13,13 +13,14 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v7
         with:
           node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: npx prettier --check .
-      - run: npm run typecheck
-      - run: npm test
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm exec prettier --check .
+      - run: pnpm typecheck
+      - run: pnpm test
       - name: Build image
         run: docker build -t open-payments-oidc .

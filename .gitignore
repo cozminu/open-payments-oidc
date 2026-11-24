@@ -9,3 +9,4 @@ spike/
 config/op-private-key*
 .env.*
 !.env.example
+dist/

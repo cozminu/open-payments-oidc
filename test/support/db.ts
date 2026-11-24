@@ -1,6 +1,6 @@
 import { PGlite } from "@electric-sql/pglite";
-import type { Db, Queryable } from "../../src/db/db.ts";
-import { migrate } from "../../src/db/migrate.ts";
+import type { Db, Queryable } from "../../packages/wallet-login/src/db.ts";
+import { migrate } from "../../packages/wallet-login/src/migrations.ts";
 
 export async function createTestDb(): Promise<Db> {
   const pg = new PGlite();

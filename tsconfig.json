@@ -11,7 +11,8 @@
     "verbatimModuleSyntax": true,
     "allowImportingTsExtensions": true,
     "noEmit": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "customConditions": ["source"]
   },
-  "include": ["src", "test", "examples"]
+  "include": ["packages/*/src", "packages/*/test", "test", "examples"]
 }

@@ -25,7 +25,7 @@ wallet. Apps get a normal OIDC authorization code flow and an ID token.
 ```sh
 cp .env.example .env                       # then edit it, see the table below
 cp config/clients.example.json config/clients.json
-npm ci && npm run -s generate-jwks > config/jwks.json
+pnpm install && pnpm -s generate-jwks > config/jwks.json
 openssl genpkey -algorithm ed25519 -out config/op-private-key.pem   # or see "Testnet setup"
 docker compose up -d --build
 curl -sf localhost:3000/healthz            # ok
@@ -38,10 +38,10 @@ that user can read the files (for example `chmod 644`, or `chown 1000`). All of 
 gitignored; only `config/clients.example.json` is committed.
 
 Without Node on the host you can generate the JWKS with the image instead:
-`docker compose run --rm --no-deps oidc node src/cli/generate-jwks.ts > config/jwks.json`.
+`docker compose run --rm --no-deps oidc node --conditions=source packages/server/src/generate-jwks.ts > config/jwks.json`.
 
-To run without compose: `npm ci --omit=dev`, set the environment, then `npm start`
-(`node src/main.ts`, Node 24 or later).
+To run without compose: `pnpm install --prod --filter @open-payments-oidc/server...`, set the environment, then `pnpm start`
+(`node --conditions=source packages/server/src/main.ts`, Node 24 or later).
 
 Tagged releases are also published as a prebuilt image for amd64 and arm64,
 `ghcr.io/cozminu/open-payments-oidc:<version>`. To use it with compose, replace `build: .` with
@@ -98,8 +98,8 @@ Endpoints are the usual `oidc-provider` ones: discovery at `/.well-known/openid-
 ID token signing keys are a private JWKS file. Generate one:
 
 ```sh
-npm run -s generate-jwks > config/jwks.json         # one RSA 2048 key, RS256
-npm run -s generate-jwks -- --ec > config/jwks.json # RSA plus a P-256 key (ES256)
+pnpm -s generate-jwks > config/jwks.json         # one RSA 2048 key, RS256
+pnpm -s generate-jwks --ec    > config/jwks.json # RSA plus a P-256 key (ES256)
 ```
 
 Clients get RS256 ID tokens (there is no per-client setting for another algorithm), so the file
@@ -145,11 +145,11 @@ automated tests.
 2. `cp config/clients.example.json config/clients.json`. It registers `example-spa`, a public
    client with redirect URI `http://localhost:5173/callback` and post-logout redirect URI
    `http://localhost:5173/`, which is what the sample client uses.
-3. `npm ci && npm run -s generate-jwks > config/jwks.json`.
+3. `pnpm install && pnpm -s generate-jwks > config/jwks.json`.
 4. `docker compose up -d --build`, then `curl -sf localhost:3000/healthz` should print `ok`.
    After editing `.env`, run `docker compose up -d --force-recreate oidc` (a restart doesn't
    re-read it).
-5. `npm run sample-client` and open <http://localhost:5173/>. Click Sign in, enter
+5. `pnpm sample-client` and open <http://localhost:5173/>. Click Sign in, enter
    `$ilp.interledger-test.dev/<you>` and approve at the test wallet. You land back on the sample
    client, which has verified the ID token and shows its claims, its header and the userinfo
    response. `sub` and `wallet_address` should be your wallet address.
@@ -207,9 +207,9 @@ own signed request: check `OP_WALLET_ADDRESS`, `OP_KEY_ID` and the private key b
 ## Development
 
 ```sh
-npm ci
-npm test            # node:test, database on PGlite, Open Payments faked in-process
-npm run typecheck
+pnpm install
+pnpm test            # node:test, database on PGlite, Open Payments faked in-process
+pnpm typecheck
 npx prettier --check .
 ```
 

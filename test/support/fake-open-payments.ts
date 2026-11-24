@@ -5,9 +5,9 @@ import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { TestContext } from "node:test";
-import { SdkOpenPaymentsGateway } from "../../src/wallet/open-payments-gateway.ts";
-import type { OutboundPolicy } from "../../src/wallet/outbound.ts";
-import type { CallbackParams } from "../../src/wallet/verifier.ts";
+import { SdkOpenPaymentsGateway } from "../../packages/wallet-login/src/open-payments-gateway.ts";
+import type { OutboundPolicy } from "../../packages/wallet-login/src/outbound.ts";
+import type { CallbackParams } from "../../packages/wallet-login/src/verifier.ts";
 
 export type Approval = "approve" | "reject" | "tamper";
 

@@ -4,16 +4,16 @@ import type { AddressInfo } from "node:net";
 import type { TestContext } from "node:test";
 import * as oidc from "openid-client";
 import type Provider from "oidc-provider";
-import type { ClientConfig } from "../../src/config/clients.ts";
-import type { Config } from "../../src/config/env.ts";
-import type { Db } from "../../src/db/db.ts";
-import { PendingLoginRepo } from "../../src/db/pending-logins.ts";
-import { createApp } from "../../src/http/app.ts";
-import { RateLimiter } from "../../src/http/rate-limit.ts";
-import { createLogger } from "../../src/log.ts";
-import { createOidcProvider } from "../../src/oidc/provider.ts";
-import { OutboundPolicy } from "../../src/wallet/outbound.ts";
-import { WalletVerifier } from "../../src/wallet/verifier.ts";
+import type { ClientConfig } from "../../packages/oidc/src/clients.ts";
+import type { Config } from "../../packages/server/src/env.ts";
+import type { Db } from "../../packages/wallet-login/src/db.ts";
+import { PendingLoginRepo } from "../../packages/wallet-login/src/pending-logins.ts";
+import { createApp } from "../../packages/oidc/src/app.ts";
+import { RateLimiter } from "../../packages/oidc/src/rate-limit.ts";
+import { createLogger } from "../../packages/wallet-login/src/log.ts";
+import { createOidcProvider } from "../../packages/oidc/src/provider.ts";
+import { OutboundPolicy } from "../../packages/wallet-login/src/outbound.ts";
+import { WalletVerifier } from "../../packages/wallet-login/src/verifier.ts";
 import { createTestDb } from "./db.ts";
 import {
   createFakeOpenPayments,
@@ -231,7 +231,13 @@ export async function startTestApp(
       logs.push(JSON.parse(line) as LogLine);
     },
   });
-  const provider = createOidcProvider({ config, clients, jwks: options.jwks ?? JWKS, db, log });
+  const provider = createOidcProvider({
+    settings: config,
+    clients,
+    jwks: options.jwks ?? JWKS,
+    db,
+    log,
+  });
   const outbound = new OutboundPolicy({
     allowHttp: config.allowHttp,
     authServerOrigins: config.authServerAllowlist,

@@ -5,7 +5,7 @@ import type {
   GrantStart,
   OpenPaymentsGateway,
   WalletAddressLookup,
-} from "../../src/wallet/open-payments-gateway.ts";
+} from "../../packages/wallet-login/src/open-payments-gateway.ts";
 
 export const WALLET_ADDRESS = "https://wallet.example/alice";
 export const AUTH_SERVER = "https://auth.example/tenant";
