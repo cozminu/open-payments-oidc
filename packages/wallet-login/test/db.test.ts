@@ -138,3 +138,9 @@ test("openDatabase owns a connection string", async () => {
   // A live pool would reject with ECONNREFUSED; this message only comes from an ended pool.
   await assert.rejects(db.query("SELECT 1"), /after calling end/);
 });
+
+test("openDatabase rejects a missing or empty database", () => {
+  for (const input of [undefined, null, "", "  "]) {
+    assert.throws(() => openDatabase(input as never), /database is required/);
+  }
+});

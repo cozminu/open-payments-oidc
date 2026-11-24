@@ -156,3 +156,9 @@ test("memory: save evicts expired entries", async () => {
   assert.equal(await store.take("a"), undefined);
   assert.ok(await store.take("b"));
 });
+
+test("postgresStore rejects a missing or empty database", async () => {
+  for (const database of [undefined, null, ""]) {
+    await assert.rejects(postgresStore({ database: database as never }), /database is required/);
+  }
+});

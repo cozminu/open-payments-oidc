@@ -19,7 +19,7 @@ const running = await startServer({
   clients, // ClientConfig[]
   jwks, // { keys: JsonWebKey[] }, private signing keys
   cookieKeys: ["a-long-random-secret"],
-  database: process.env.DATABASE_URL, // connection string, pg.Pool or Db
+  database: process.env.DATABASE_URL!, // connection string, pg.Pool or Db
   wallet: { address, keyId, privateKey },
   authServerAllowlist: ["https://auth.interledger-test.dev"],
   port: 3000,

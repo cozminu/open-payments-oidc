@@ -77,6 +77,9 @@ export function openDatabase(
   input: DatabaseInput,
   log: Logger = silentLogger,
 ): { db: Db; owned: boolean } {
+  if (input === undefined || input === null || (typeof input === "string" && input.trim() === "")) {
+    throw new Error("database is required: pass a connection string, a Db or a pg.Pool");
+  }
   if (typeof input === "string") return { db: createPgDb(input, log), owned: true };
   if ("transaction" in input) return { db: input, owned: false };
   return { db: wrapPool(input, async () => {}), owned: false };

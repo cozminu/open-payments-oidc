@@ -122,6 +122,28 @@ test("config errors are collected", async (context) => {
   );
 });
 
+for (const [label, override, pattern] of [
+  ["undefined database", { database: undefined }, /database is required/],
+  ["null database", { database: null }, /database is required/],
+  ["empty database", { database: "" }, /database is required/],
+  ["blank database", { database: "  " }, /database is required/],
+  ["empty cookie key", { cookieKeys: [""] }, /cookieKeys must be a non-empty array/],
+  ["string cookieKeys", { cookieKeys: "secret" }, /cookieKeys must be a non-empty array/],
+] as const) {
+  test(`config rejects ${label}`, async (context) => {
+    const db = await createTestDb();
+    context.after(() => db.close());
+    await assert.rejects(
+      createOidcHandler({ ...baseConfig("https://x.example/op", db), ...override } as never),
+      (error: Error) => {
+        assert.match(error.message, /^Invalid configuration:\n- /);
+        assert.match(error.message, pattern);
+        return true;
+      },
+    );
+  });
+}
+
 test("a consumed body gets a 400, not a hang", async (context) => {
   const logs: LogLine[] = [];
   const { url } = await mounted(context, {

@@ -42,7 +42,11 @@ export type OidcHandlerConfig = {
   outboundTimeoutMs?: number;
   /** Login submissions and wallet callbacks per client IP, per process. Default 20. */
   rateLimitPerMinute?: number;
-  /** Trust `X-Forwarded-For`. Only behind a proxy that sets it. Default false. */
+  /**
+   * Trust `X-Forwarded-For`, `X-Forwarded-Proto` and `X-Forwarded-Host`. Must be on behind a
+   * TLS-offloading proxy (otherwise cookies aren't marked Secure); only behind a proxy that sets
+   * them. Default false.
+   */
   trustProxy?: boolean;
   /** Delete expired rows every 10 minutes. Default true. */
   cleanup?: boolean;
@@ -81,7 +85,22 @@ export async function createOidcHandler(config: OidcHandlerConfig): Promise<Oidc
   const errors: string[] = [];
   const issuer = parseIssuer(config.issuer ?? "", errors);
   if (config.issuer === undefined || config.issuer === "") errors.push("issuer is required");
-  if ((config.cookieKeys ?? []).length === 0) errors.push("cookieKeys must list at least one key");
+  const keys: unknown = config.cookieKeys;
+  if (
+    !Array.isArray(keys) ||
+    keys.length === 0 ||
+    !keys.every((key) => typeof key === "string" && key !== "")
+  ) {
+    errors.push("cookieKeys must be a non-empty array of non-empty strings");
+  }
+  const database: unknown = config.database;
+  if (
+    database === undefined ||
+    database === null ||
+    (typeof database === "string" && database.trim() === "")
+  ) {
+    errors.push("database is required");
+  }
   if (!isIntegerBetween(sessionTtlSeconds, 1, 31_536_000)) {
     errors.push(
       `sessionTtlSeconds must be an integer between 1 and 31536000 (got ${sessionTtlSeconds})`,
