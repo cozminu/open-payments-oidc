@@ -15,10 +15,11 @@ import {
   deleteExpiredPendingLogins,
   migrateWalletLogin,
   OutboundPolicy,
-  PendingLoginRepo,
+  postgresStore,
   SdkOpenPaymentsGateway,
   WalletVerifier,
   type Db,
+  type Logger,
 } from "@open-payments-oidc/wallet-login/internal";
 import { loadConfig } from "./env.ts";
 
@@ -36,14 +37,14 @@ export type Running = {
  */
 export async function main(
   env: Record<string, string | undefined>,
-  deps: { createDb?: (url: string) => Db } = {},
+  deps: { createDb?: (url: string, log?: Logger) => Db } = {},
 ): Promise<Running> {
   const log = createLogger();
   const config = loadConfig(env);
   const clients = loadClients(config.clientsFile);
   const jwks = loadJwks(config.jwksFile);
 
-  const db = (deps.createDb ?? createPgDb)(config.databaseUrl);
+  const db = (deps.createDb ?? createPgDb)(config.databaseUrl, log);
   let timer: NodeJS.Timeout | undefined;
   let app: Server | undefined;
   try {
@@ -62,7 +63,11 @@ export async function main(
       requestTimeoutMs: config.outboundTimeoutMs,
       outbound,
     });
-    const verifier = new WalletVerifier({ gateway, pendingLogins: new PendingLoginRepo(db), log });
+    const verifier = new WalletVerifier({
+      gateway,
+      store: await postgresStore({ database: db, cleanup: false, log }),
+      log,
+    });
     const provider = createOidcProvider({
       settings: {
         issuer: config.issuer,

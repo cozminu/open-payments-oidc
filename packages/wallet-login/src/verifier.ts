@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import type { PendingLoginRepo } from "./pending-logins.ts";
+import type { PendingLoginStore } from "./pending-login-store.ts";
 import type { Logger } from "./log.ts";
 import { LoginHash } from "./hash.ts";
 import type { OpenPaymentsGateway } from "./open-payments-gateway.ts";
@@ -18,7 +18,9 @@ export type CallbackParams = { interactRef?: string; hash?: string; result?: str
 
 export type WalletVerifierOptions = {
   gateway: OpenPaymentsGateway;
-  pendingLogins: PendingLoginRepo;
+  store: PendingLoginStore;
+  /** How long a started login can be finished. Default 600. */
+  loginTtlSeconds?: number;
   createNonce?: () => string;
   log: Logger;
 };
@@ -30,13 +32,15 @@ const UNUSABLE = "Your wallet provider's response couldn't be used.";
 /** Proves a user controls a wallet address with an interactive Open Payments subject grant. */
 export class WalletVerifier {
   private readonly gateway: OpenPaymentsGateway;
-  private readonly pendingLogins: PendingLoginRepo;
+  private readonly store: PendingLoginStore;
+  private readonly loginTtlSeconds: number;
   private readonly createNonce: () => string;
   private readonly log: Logger;
 
   constructor(opts: WalletVerifierOptions) {
     this.gateway = opts.gateway;
-    this.pendingLogins = opts.pendingLogins;
+    this.store = opts.store;
+    this.loginTtlSeconds = opts.loginTtlSeconds ?? 600;
     this.createNonce = opts.createNonce ?? (() => randomBytes(24).toString("base64url"));
     this.log = opts.log;
   }
@@ -150,15 +154,18 @@ export class WalletVerifier {
       case "pending":
         break;
     }
-    await this.pendingLogins.save({
+    await this.store.save(
       uid,
-      walletAddress: lookup.walletAddressId,
-      authServerUrl: lookup.authServer,
-      clientNonce,
-      interactNonce: grant.interactNonce,
-      continueUrl: grant.continueUrl,
-      continueAccessToken: grant.continueAccessToken,
-    });
+      {
+        walletAddress: lookup.walletAddressId,
+        authServerUrl: lookup.authServer,
+        clientNonce,
+        interactNonce: grant.interactNonce,
+        continueUrl: grant.continueUrl,
+        continueAccessToken: grant.continueAccessToken,
+      },
+      this.loginTtlSeconds,
+    );
     return { kind: "redirect", redirectUrl: grant.redirectUrl };
   }
 
@@ -167,7 +174,7 @@ export class WalletVerifier {
     params: CallbackParams,
     trace: Trace,
   ): Promise<FinishOutcome> {
-    const pending = await this.pendingLogins.take(uid);
+    const pending = await this.store.take(uid);
     if (pending === undefined) {
       trace.reason = "no pending login";
       return { kind: "failed", reason: EXPIRED };

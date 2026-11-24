@@ -7,7 +7,7 @@ import type Provider from "oidc-provider";
 import type { ClientConfig } from "../../packages/oidc/src/clients.ts";
 import type { Config } from "../../packages/server/src/env.ts";
 import type { Db } from "../../packages/wallet-login/src/db.ts";
-import { PendingLoginRepo } from "../../packages/wallet-login/src/pending-logins.ts";
+import { postgresStore } from "../../packages/wallet-login/src/pending-login-store.ts";
 import { createApp } from "../../packages/oidc/src/app.ts";
 import { RateLimiter } from "../../packages/oidc/src/rate-limit.ts";
 import { createLogger } from "../../packages/wallet-login/src/log.ts";
@@ -244,7 +244,7 @@ export async function startTestApp(
   });
   const verifier = new WalletVerifier({
     gateway: await createTestGateway(context, outbound),
-    pendingLogins: new PendingLoginRepo(db),
+    store: await postgresStore({ database: db, cleanup: false }),
     log,
   });
   app = createApp({

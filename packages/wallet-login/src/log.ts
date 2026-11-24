@@ -56,3 +56,6 @@ export function createLogger(options: LoggerOptions = {}): Logger {
 }
 
 export const consoleLogger: Logger = createLogger();
+
+/** Drops everything. The default for library code whose caller didn't pass a logger. */
+export const silentLogger: Logger = { info() {}, warn() {}, error() {} };

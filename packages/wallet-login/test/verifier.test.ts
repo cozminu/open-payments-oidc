@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test, type TestContext } from "node:test";
-import { PendingLoginRepo } from "../src/pending-logins.ts";
+import { memoryStore } from "../src/pending-login-store.ts";
 import type { LogFields, Logger } from "../src/log.ts";
 import type {
   GrantContinuation,
@@ -8,7 +8,6 @@ import type {
   WalletAddressLookup,
 } from "../src/open-payments-gateway.ts";
 import { WalletVerifier, type CallbackParams } from "../src/verifier.ts";
-import { createTestDb } from "../../../test/support/db.ts";
 import { interactionHash } from "../../../test/support/fake-open-payments.ts";
 import {
   AUTH_SERVER,
@@ -46,13 +45,11 @@ function recordingLogger(): { log: Logger; calls: LogCall[] } {
 }
 
 async function setup(context: TestContext, options: InMemoryGatewayOptions = {}) {
-  const db = await createTestDb();
-  context.after(() => db.close());
   const logger = recordingLogger();
   const gateway = new InMemoryGateway(options);
   const verifier = new WalletVerifier({
     gateway,
-    pendingLogins: new PendingLoginRepo(db),
+    store: memoryStore(),
     createNonce: () => NONCE,
     log: logger.log,
   });
@@ -260,8 +257,6 @@ test("a revoke failure is logged even when the subject is wrong", async (context
 });
 
 test("start and finish never throw, even when the gateway breaks its contract", async (context) => {
-  const db = await createTestDb();
-  context.after(() => db.close());
   const logger = recordingLogger();
   class BrokenGateway extends InMemoryGateway {
     public override async fetchWalletAddress(): Promise<WalletAddressLookup> {
@@ -270,7 +265,7 @@ test("start and finish never throw, even when the gateway breaks its contract", 
   }
   const verifier = new WalletVerifier({
     gateway: new BrokenGateway(),
-    pendingLogins: new PendingLoginRepo(db),
+    store: memoryStore(),
     log: logger.log,
   });
   const outcome = await verifier.start("uid-1", WALLET_ADDRESS, CALLBACK);

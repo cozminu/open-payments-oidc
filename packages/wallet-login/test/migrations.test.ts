@@ -4,7 +4,7 @@ import { createTestDb } from "../../../test/support/db.ts";
 import { migrate as legacyMigrate } from "../../../test/support/legacy-migrate.ts";
 import { deleteExpiredPendingLogins, migrateWalletLogin } from "../src/migrations.ts";
 import { migrateOidc } from "../../oidc/src/migrations.ts";
-import { PendingLoginRepo } from "../src/pending-logins.ts";
+import { postgresStore } from "../src/pending-login-store.ts";
 
 async function regclass(db: Awaited<ReturnType<typeof createTestDb>>, name: string) {
   const { rows } = await db.query<{ t: string | null }>("SELECT to_regclass($1)::text AS t", [
@@ -95,7 +95,7 @@ test("rerunning is a no-op", async () => {
 test("deleteExpiredPendingLogins removes only expired rows", async () => {
   const db = await createTestDb();
   try {
-    const repo = new PendingLoginRepo(db);
+    const store = await postgresStore({ database: db, cleanup: false });
     const base = {
       walletAddress: "w",
       authServerUrl: "a",
@@ -104,8 +104,8 @@ test("deleteExpiredPendingLogins removes only expired rows", async () => {
       continueUrl: "u",
       continueAccessToken: "t",
     };
-    await repo.save({ ...base, uid: "old" });
-    await repo.save({ ...base, uid: "fresh" });
+    await store.save("old", base, 600);
+    await store.save("fresh", base, 600);
     await db.query(
       "UPDATE pending_logins SET expires_at = now() - interval '1 second' WHERE uid = $1",
       ["old"],

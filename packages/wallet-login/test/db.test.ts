@@ -1,7 +1,8 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
 import pg from "pg";
-import { createPgDb } from "../src/db.ts";
+import { createPgDb, openDatabase } from "../src/db.ts";
+import { createLogger } from "../src/log.ts";
 
 test("pool error handler logs a single JSON line on stdout with the message only", () => {
   const handlers: Record<string, (err: Error) => void> = {};
@@ -10,7 +11,7 @@ test("pool error handler logs a single JSON line on stdout with the message only
   });
   const logged = mock.method(process.stdout, "write", () => true);
   try {
-    createPgDb("postgres://user:secret@localhost:1/db");
+    createPgDb("postgres://user:secret@localhost:1/db", createLogger());
     const handler = handlers["error"];
     assert.ok(handler, "pool.on('error') handler registered");
     handler(new Error("terminating connection"));
@@ -76,4 +77,64 @@ test("client is returned to the pool when ROLLBACK succeeds", async () => {
   } finally {
     mock.restoreAll();
   }
+});
+
+test("pool errors are dropped when no logger is passed", () => {
+  const handlers: Record<string, (err: Error) => void> = {};
+  mock.method(pg.Pool.prototype, "on", (event: string, fn: (err: Error) => void) => {
+    handlers[event] = fn;
+  });
+  const logged = mock.method(process.stdout, "write", () => true);
+  try {
+    createPgDb("postgres://localhost:1/db");
+    handlers["error"]?.(new Error("terminating connection"));
+    assert.equal(logged.mock.callCount(), 0);
+  } finally {
+    mock.restoreAll();
+  }
+});
+
+test("openDatabase accepts a pool-like object from another pg copy", async () => {
+  let ended = 0;
+  const pool = {
+    async query() {
+      return { rows: [{ one: 1 }] };
+    },
+    async connect() {
+      return {
+        async query() {
+          return { rows: [] };
+        },
+        release() {},
+      };
+    },
+    async end() {
+      ended += 1;
+    },
+  };
+  const { db, owned } = openDatabase(pool);
+  assert.equal(owned, false);
+  assert.deepEqual((await db.query("SELECT 1")).rows, [{ one: 1 }]);
+  assert.equal(await db.transaction(async () => "done"), "done");
+  await db.close();
+  assert.equal(ended, 0);
+});
+
+test("openDatabase passes a Db through unowned", () => {
+  const given = {
+    query: async () => ({ rows: [] }),
+    transaction: async <T>(fn: (tx: never) => Promise<T>) => fn(undefined as never),
+    close: async () => {},
+  };
+  const { db, owned } = openDatabase(given);
+  assert.equal(db, given);
+  assert.equal(owned, false);
+});
+
+test("openDatabase owns a connection string", async () => {
+  const { db, owned } = openDatabase("postgres://127.0.0.1:1/none");
+  assert.equal(owned, true);
+  await db.close();
+  // A live pool would reject with ECONNREFUSED; this message only comes from an ended pool.
+  await assert.rejects(db.query("SELECT 1"), /after calling end/);
 });
