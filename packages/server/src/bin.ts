@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { createLogger, type DatabaseInput } from "@open-payments-oidc/wallet-login";
 import { configFromEnv } from "./env.ts";
 import { startServer, type RunningServer } from "./start-server.ts";

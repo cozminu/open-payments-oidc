@@ -1,3 +1,4 @@
+#!/usr/bin/env node
 import { generateKeyPairSync, randomBytes, type JsonWebKey } from "node:crypto";
 
 type SigningKey = JsonWebKey & { kid: string; alg: string; use: string };
