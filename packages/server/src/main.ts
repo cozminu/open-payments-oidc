@@ -3,15 +3,17 @@ import type { AddressInfo } from "node:net";
 import {
   createApp,
   createOidcProvider,
+  deleteExpiredOidcModels,
   loadClients,
   loadJwks,
+  migrateOidc,
   RateLimiter,
 } from "@open-payments-oidc/oidc/internal";
 import {
   createLogger,
   createPgDb,
-  deleteExpired,
-  migrate,
+  deleteExpiredPendingLogins,
+  migrateWalletLogin,
   OutboundPolicy,
   PendingLoginRepo,
   SdkOpenPaymentsGateway,
@@ -45,7 +47,8 @@ export async function main(
   let timer: NodeJS.Timeout | undefined;
   let app: Server | undefined;
   try {
-    await migrate(db);
+    await migrateWalletLogin(db);
+    await migrateOidc(db);
     log.info("db.migrated");
 
     const outbound = new OutboundPolicy({
@@ -93,8 +96,8 @@ export async function main(
     listening.on("error", (error) => log.error("server.error", { error: error.message }));
 
     timer = setInterval(() => {
-      deleteExpired(db).then(
-        (deleted) => log.info("cleanup.done", deleted),
+      Promise.all([deleteExpiredOidcModels(db), deleteExpiredPendingLogins(db)]).then(
+        ([oidcModels, pendingLogins]) => log.info("cleanup.done", { oidcModels, pendingLogins }),
         (error: unknown) =>
           log.error("cleanup.failed", {
             error: error instanceof Error ? error.message : String(error),

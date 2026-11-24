@@ -4,3 +4,4 @@ export { loadClients, type ClientConfig } from "./clients.ts";
 export { loadJwks } from "./keys.ts";
 export { createOidcProvider, type ProviderSettings } from "./provider.ts";
 export { RateLimiter } from "./rate-limit.ts";
+export { deleteExpiredOidcModels, migrateOidc } from "./migrations.ts";
