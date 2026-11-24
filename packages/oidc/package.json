@@ -2,6 +2,11 @@
   "name": "@open-payments-oidc/oidc",
   "version": "0.1.0",
   "license": "Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cozminu/open-payments-oidc.git",
+    "directory": "packages/oidc"
+  },
   "type": "module",
   "engines": {
     "node": ">=24"
