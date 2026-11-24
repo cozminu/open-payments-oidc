@@ -1,3 +1,5 @@
+import { parseAuthServerAllowlist } from "@open-payments-oidc/wallet-login/internal";
+
 export type Config = {
   issuer: string;
   port: number;
@@ -78,10 +80,11 @@ export function loadConfig(env: Record<string, string | undefined>): Config {
 
   const sessionTtlSeconds = integer("SESSION_TTL_SECONDS", 3600, 1, 31_536_000);
   const allowHttp = boolean("ALLOW_HTTP", false);
-  const authServerAllowlist = parseAllowlist(
-    env.AUTH_SERVER_ALLOWLIST ?? DEFAULT_ALLOWLIST,
+  const authServerAllowlist = parseAuthServerAllowlist(
+    list(env.AUTH_SERVER_ALLOWLIST ?? DEFAULT_ALLOWLIST),
     allowHttp,
     errors,
+    { list: "AUTH_SERVER_ALLOWLIST", allowHttp: "ALLOW_HTTP" },
   );
   const trustProxy = boolean("TRUST_PROXY", true);
   const rateLimitPerMinute = integer("RATE_LIMIT_PER_MINUTE", 20, 1, 1_000_000);
@@ -126,50 +129,4 @@ function parseIssuer(raw: string, errors: string[]): string {
     return problem("must be a root URL: no path, query or fragment (the provider is served at /)");
   }
   return url.origin;
-}
-
-// There is deliberately no "allow any" escape hatch: "*" and an empty list are errors.
-// An explicitly set but blank value fails rather than silently using the default. An http origin
-// without ALLOW_HTTP would never be allowed anyway, so it's a mistake worth failing on at startup.
-function parseAllowlist(raw: string, allowHttp: boolean, errors: string[]): string[] {
-  const entries = raw
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item !== "");
-
-  if (entries.length === 0) {
-    errors.push("AUTH_SERVER_ALLOWLIST must list at least one origin");
-    return [];
-  }
-
-  const origins: string[] = [];
-  for (const entry of entries) {
-    let url: URL;
-    try {
-      url = new URL(entry);
-    } catch {
-      errors.push(`AUTH_SERVER_ALLOWLIST entry ${JSON.stringify(entry)} is not a valid URL`);
-      continue;
-    }
-    if (url.protocol !== "https:" && url.protocol !== "http:") {
-      errors.push(`AUTH_SERVER_ALLOWLIST entry ${JSON.stringify(entry)} must be http(s)`);
-    } else if (url.protocol === "http:" && !allowHttp) {
-      errors.push(
-        `AUTH_SERVER_ALLOWLIST entry ${JSON.stringify(entry)} must be https unless ALLOW_HTTP=true`,
-      );
-    } else if (
-      url.pathname !== "/" ||
-      url.search !== "" ||
-      url.hash !== "" ||
-      url.username ||
-      url.password
-    ) {
-      errors.push(
-        `AUTH_SERVER_ALLOWLIST entry ${JSON.stringify(entry)} must be an origin with no path, query, fragment, or credentials`,
-      );
-    } else if (!origins.includes(url.origin)) {
-      origins.push(url.origin);
-    }
-  }
-  return origins;
 }

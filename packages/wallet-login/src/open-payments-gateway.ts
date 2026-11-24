@@ -1,3 +1,4 @@
+import type { KeyObject } from "node:crypto";
 import {
   createAuthenticatedClient,
   isFinalizedGrantWithSubject,
@@ -85,7 +86,7 @@ export type SdkOpenPaymentsGatewayOptions = {
   readonly walletAddressUrl: string;
   readonly keyId: string;
   /** Path to the Ed25519 private key (PEM), or the key itself. */
-  readonly privateKey: string;
+  readonly privateKey: string | KeyObject;
   readonly requestTimeoutMs: number;
   readonly outbound: OutboundPolicy;
 };

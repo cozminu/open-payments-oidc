@@ -10,4 +10,5 @@ export {
 export { SdkOpenPaymentsGateway } from "./open-payments-gateway.ts";
 export { OutboundPolicy } from "./outbound.ts";
 export { memoryStore, postgresStore, type PendingLoginStore } from "./pending-login-store.ts";
-export { WalletVerifier, type CallbackParams } from "./verifier.ts";
+export { callbackParamsFrom, WalletVerifier, type CallbackParams } from "./verifier.ts";
+export { parseAuthServerAllowlist } from "./allowlist.ts";

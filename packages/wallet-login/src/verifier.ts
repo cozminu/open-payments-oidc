@@ -16,6 +16,18 @@ export type FinishOutcome =
 
 export type CallbackParams = { interactRef?: string; hash?: string; result?: string };
 
+/** Reads the wallet's finish redirect query (`interact_ref`, `hash`, `result`). */
+export function callbackParamsFrom(query: URLSearchParams): CallbackParams {
+  const params: CallbackParams = {};
+  const interactRef = query.get("interact_ref");
+  const hash = query.get("hash");
+  const result = query.get("result");
+  if (interactRef !== null) params.interactRef = interactRef;
+  if (hash !== null) params.hash = hash;
+  if (result !== null) params.result = result;
+  return params;
+}
+
 export type WalletVerifierOptions = {
   gateway: OpenPaymentsGateway;
   store: PendingLoginStore;

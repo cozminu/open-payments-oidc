@@ -3,7 +3,7 @@ import { errors } from "oidc-provider";
 import type Provider from "oidc-provider";
 import type { InteractionResults } from "oidc-provider";
 import type { Logger } from "@open-payments-oidc/wallet-login/internal";
-import type { CallbackParams, WalletVerifier } from "@open-payments-oidc/wallet-login/internal";
+import { callbackParamsFrom, type WalletVerifier } from "@open-payments-oidc/wallet-login/internal";
 import { appNameOf, renderErrorPage, renderLoginPage, SECURITY_HEADERS } from "./views.ts";
 
 export type InteractionDeps = { provider: Provider; verifier: WalletVerifier; log: Logger };
@@ -95,7 +95,7 @@ export class InteractionHandlers {
       await this.refusePrompt(req, res, interaction);
       return;
     }
-    const outcome = await this.verifier.finish(uid, toCallbackParams(query));
+    const outcome = await this.verifier.finish(uid, callbackParamsFrom(query));
     switch (outcome.kind) {
       case "verified":
         // The only place a login result is produced: after the wallet confirmed the address.
@@ -159,17 +159,6 @@ export class InteractionHandlers {
   ): Promise<void> {
     await this.provider.interactionFinished(req, res, result, { mergeWithLastSubmission: false });
   }
-}
-
-function toCallbackParams(query: URLSearchParams): CallbackParams {
-  const params: CallbackParams = {};
-  const interactRef = query.get("interact_ref");
-  const hash = query.get("hash");
-  const result = query.get("result");
-  if (interactRef !== null) params.interactRef = interactRef;
-  if (hash !== null) params.hash = hash;
-  if (result !== null) params.result = result;
-  return params;
 }
 
 // Past this much an over-limit body is cut off instead of drained, so the socket is dropped.
