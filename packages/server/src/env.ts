@@ -1,5 +1,7 @@
-import { parseIssuer } from "@open-payments-oidc/oidc";
+import { readFileSync } from "node:fs";
+import { parseIssuer, readClientsFile, readJwksFile } from "@open-payments-oidc/oidc";
 import { parseAuthServerAllowlist } from "@open-payments-oidc/wallet-login";
+import type { ServerConfig } from "./start-server.ts";
 
 export type Config = {
   issuer: string;
@@ -20,6 +22,41 @@ export type Config = {
 };
 
 const DEFAULT_ALLOWLIST = "https://auth.interledger-test.dev";
+
+/** The environment as typed config, with the clients, JWKS and private key files read. */
+export function configFromEnv(env: Record<string, string | undefined>): ServerConfig {
+  const config = loadConfig(env);
+  const clients = readClientsFile(config.clientsFile);
+  const jwks = readJwksFile(config.jwksFile);
+  return {
+    issuer: config.issuer,
+    port: config.port,
+    database: config.databaseUrl,
+    wallet: {
+      address: config.opWalletAddress,
+      keyId: config.opKeyId,
+      privateKey: readPrivateKey(config.opPrivateKeyPath),
+    },
+    clients,
+    jwks,
+    cookieKeys: config.cookieKeys,
+    sessionTtlSeconds: config.sessionTtlSeconds,
+    authServerAllowlist: config.authServerAllowlist,
+    allowHttp: config.allowHttp,
+    trustProxy: config.trustProxy,
+    rateLimitPerMinute: config.rateLimitPerMinute,
+    outboundTimeoutMs: config.outboundTimeoutMs,
+  };
+}
+
+function readPrivateKey(path: string): string {
+  try {
+    return readFileSync(path, "utf8");
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code ?? "unknown error";
+    throw new Error(`OP_PRIVATE_KEY_PATH ${JSON.stringify(path)} could not be read (${code})`);
+  }
+}
 
 export function loadConfig(env: Record<string, string | undefined>): Config {
   const errors: string[] = [];

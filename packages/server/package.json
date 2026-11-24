@@ -6,6 +6,17 @@
   "engines": {
     "node": ">=24"
   },
+  "exports": {
+    ".": {
+      "source": "./src/index.ts",
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "bin": {
+    "open-payments-oidc": "dist/bin.js",
+    "open-payments-oidc-generate-jwks": "dist/generate-jwks.js"
+  },
   "dependencies": {
     "@open-payments-oidc/oidc": "workspace:*",
     "@open-payments-oidc/wallet-login": "workspace:*"

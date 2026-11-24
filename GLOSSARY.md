@@ -9,6 +9,10 @@ address instead of a password.
 The URL that identifies a user's Open Payments account, and the user's whole identity here (`sub`).
 _Avoid_: payment pointer (only an input shorthand), account
 
+**Wallet login**:
+Proving a user controls a wallet address with an interactive subject grant, without OIDC. The
+`wallet-login` package does only this; the provider builds OIDC on top of it.
+
 **Auth server**:
 The Open Payments authorization server a wallet address names, which grants or refuses the login.
 _Avoid_: authorization server, AS

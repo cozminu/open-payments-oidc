@@ -41,7 +41,7 @@ Without Node on the host you can generate the JWKS with the image instead:
 `docker compose run --rm --no-deps oidc node --conditions=source packages/server/src/generate-jwks.ts > config/jwks.json`.
 
 To run without compose: `pnpm install --prod --filter @open-payments-oidc/server...`, set the environment, then `pnpm start`
-(`node --conditions=source packages/server/src/main.ts`, Node 24 or later).
+(`node --conditions=source packages/server/src/bin.ts`, Node 24 or later).
 
 Tagged releases are also published as a prebuilt image for amd64 and arm64,
 `ghcr.io/cozminu/open-payments-oidc:<version>`. To use it with compose, replace `build: .` with
@@ -49,7 +49,7 @@ that image.
 
 ## Configuration
 
-All settings are environment variables. `main` reports every missing or invalid variable at once
+All settings are environment variables. `open-payments-oidc` reports every missing or invalid variable at once
 and exits non-zero. `.env.example` has the same list with comments.
 
 | Variable                | Default                             | Meaning                                                                                                                                                                          |
@@ -98,8 +98,8 @@ Endpoints are the usual `oidc-provider` ones: discovery at `/.well-known/openid-
 ID token signing keys are a private JWKS file. Generate one:
 
 ```sh
-pnpm -s generate-jwks > config/jwks.json         # one RSA 2048 key, RS256
-pnpm -s generate-jwks --ec    > config/jwks.json # RSA plus a P-256 key (ES256)
+pnpm -s generate-jwks > config/jwks.json      # one RSA 2048 key, RS256
+pnpm -s generate-jwks --ec > config/jwks.json # RSA plus a P-256 key (ES256)
 ```
 
 Clients get RS256 ID tokens (there is no per-client setting for another algorithm), so the file
@@ -204,13 +204,24 @@ own signed request: check `OP_WALLET_ADDRESS`, `OP_KEY_ID` and the private key b
   an IP-filtering `lookup`.
 - Clients are static: adding one means editing the file and restarting.
 
+## Use as a library
+
+The same code is split into three npm packages, so you can use as much of it as you need:
+
+- [`@open-payments-oidc/wallet-login`](packages/wallet-login/README.md): prove a user controls a
+  wallet address, no OIDC.
+- [`@open-payments-oidc/oidc`](packages/oidc/README.md): the OIDC provider as a Node
+  `(req, res)` handler to mount in your own server.
+- [`@open-payments-oidc/server`](packages/server/README.md): `startServer`, and the
+  `open-payments-oidc` command this image runs.
+
 ## Development
 
 ```sh
 pnpm install
 pnpm test            # node:test, database on PGlite, Open Payments faked in-process
 pnpm typecheck
-npx prettier --check .
+pnpm exec prettier --check .
 ```
 
 Tests don't need Postgres or network (the database is PGlite). `createPgDb` is only exercised

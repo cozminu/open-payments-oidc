@@ -6,9 +6,9 @@
 Interledger test wallet look, and the sample client in a neutral developer look, with HTML and
 CSS only.
 
-**Architecture:** Provider pages stay template strings in `src/http/views.ts`, sharing one page
+**Architecture:** Provider pages stay template strings in `packages/oidc/src/views.ts`, sharing one page
 shell and one inline stylesheet. Two new view functions back oidc-provider's
-`logoutSource`/`postLogoutSuccessSource` hooks in `src/oidc/provider.ts`. Security headers move
+`logoutSource`/`postLogoutSuccessSource` hooks in `packages/oidc/src/provider.ts`. Security headers move
 into one exported constant so our own responses and the oidc-provider-rendered pages send the
 same set. The sample client keeps its own shell and CSS in `examples/sample-client.ts`.
 
@@ -71,7 +71,7 @@ errors.
 ### Task 1: Optional `client_name` in the clients file
 
 **Files:**
-- Modify: `src/config/clients.ts` (type `ClientConfig`, `parseClient`)
+- Modify: `packages/oidc/src/clients.ts` (type `ClientConfig`, `parseClient`)
 - Modify: `config/clients.example.json`, `README.md` (Clients file table)
 - Test: `test/config/clients.test.ts`
 
@@ -123,16 +123,16 @@ test("rejects an empty or non-string client_name", () => {
 ### Task 2: Provider page shell, sign-in and error pages
 
 **Files:**
-- Modify: `src/http/views.ts` (shell, stylesheet, `renderLoginPage`, `renderErrorPage`, new
+- Modify: `packages/oidc/src/views.ts` (shell, stylesheet, `renderLoginPage`, `renderErrorPage`, new
   `SECURITY_HEADERS`, `appNameOf`)
-- Modify: `src/http/interaction.ts` (`show`, `submit` pass `appName`; `sendHtml` uses
+- Modify: `packages/oidc/src/interaction.ts` (`show`, `submit` pass `appName`; `sendHtml` uses
   `SECURITY_HEADERS`)
-- Modify: `src/oidc/provider.ts` (`renderError` sets `SECURITY_HEADERS`)
+- Modify: `packages/oidc/src/provider.ts` (`renderError` sets `SECURITY_HEADERS`)
 - Test: `test/http/views.test.ts`, `test/e2e/login.test.ts`, `test/examples/sample-client.test.ts`
 
 **Interfaces:**
 - Consumes: `ClientConfig.client_name` (Task 1).
-- Produces (all in `src/http/views.ts`):
+- Produces (all in `packages/oidc/src/views.ts`):
   - `export const SECURITY_HEADERS: Readonly<Record<string, string>>` with exactly
     `content-security-policy`, `x-frame-options: DENY`, `referrer-policy: no-referrer`,
     `x-content-type-options: nosniff` (values as today in `sendHtml`).
@@ -228,7 +228,7 @@ test("oidc-provider error pages get our headers", async (t) => {
   the new and edited tests FAIL (missing export `appNameOf`, missing `appName` copy, no CSP on
   the error page).
 
-- [ ] **Step 4: Implement the shell and pages in `src/http/views.ts`.** Markup for the
+- [ ] **Step 4: Implement the shell and pages in `packages/oidc/src/views.ts`.** Markup for the
   card (match `provider-screens.html`): brand row (`<span class="mark" aria-hidden="true"></span>`
   + "Open Payments"), `<h1>`, body, footer "Powered by Open Payments" on the sign-in page only.
   Exact sign-in copy: heading `Welcome`; line
@@ -258,7 +258,7 @@ test("oidc-provider error pages get our headers", async (t) => {
 ```sh
 mkdir -p /tmp/ui && node --input-type=module -e '
 import { writeFileSync } from "node:fs";
-import { renderLoginPage, renderErrorPage } from "./src/http/views.ts";
+import { renderLoginPage, renderErrorPage } from "./packages/oidc/src/views.ts";
 writeFileSync("/tmp/ui/login.html", renderLoginPage({ uid: "u", appName: "example-spa" }));
 writeFileSync("/tmp/ui/login-error.html", renderLoginPage({ uid: "u", appName: "example-spa", walletAddress: "https://ilp.interledger-test.dev/a-really-long-wallet-address-that-keeps-going", error: "That doesn'\''t look like a wallet address." }));
 writeFileSync("/tmp/ui/error.html", renderErrorPage("This login expired or was already used. Start again from the app.", "Login expired"));'
@@ -271,8 +271,8 @@ writeFileSync("/tmp/ui/error.html", renderErrorPage("This login expired or was a
 ### Task 3: Logout confirmation and signed-out pages
 
 **Files:**
-- Modify: `src/http/views.ts` (two new renderers)
-- Modify: `src/oidc/provider.ts` (`features.rpInitiatedLogout`)
+- Modify: `packages/oidc/src/views.ts` (two new renderers)
+- Modify: `packages/oidc/src/provider.ts` (`features.rpInitiatedLogout`)
 - Test: `test/http/views.test.ts`, create `test/e2e/logout.test.ts`
 
 **Interfaces:**
@@ -441,6 +441,6 @@ assert.match(page.html, /Log out/);
 ## Final check
 
 - [ ] `npx prettier --check . && npm run typecheck && npm test`: all pass.
-- [ ] `grep -n "<script" src/http/views.ts examples/sample-client.ts`: no output.
+- [ ] `grep -n "<script" packages/oidc/src/views.ts examples/sample-client.ts`: no output.
 - [ ] `git status`: only the files listed in the tasks changed, plus the spec and this plan.
   Nothing committed.

@@ -15,7 +15,7 @@ Labels: enhancement
 ## Why
 
 Users type a wallet address and the provider fetches it, so the provider makes requests to hosts
-a stranger picked. `OutboundPolicy.resolveWalletAddress` (`src/wallet/outbound.ts`) resolves the
+a stranger picked. `OutboundPolicy.resolveWalletAddress` (`packages/wallet-login/src/outbound.ts`) resolves the
 host and refuses non-public addresses before the SDK fetches, but the SDK's fetch does its own DNS lookup a moment
 later. A name that answers with a public IP for the check and a private one for the fetch (DNS
 rebinding) gets through. The only check that holds is one made where the connection is opened.
@@ -41,7 +41,7 @@ until then.
 - Don't replace `globalThis.fetch` with undici's `fetch`. ky passes a built-in `Request` object to
   fetch, and `undici.fetch(<built-in Request>)` throws "Failed to parse URL". If you ever need
   undici's fetch, `undici.install()` swaps `Request`, `Response` and `Headers` along with it.
-- Add a `createDispatcher()` method to `OutboundPolicy` (`src/wallet/outbound.ts`, see
+- Add a `createDispatcher()` method to `OutboundPolicy` (`packages/wallet-login/src/outbound.ts`, see
   `GLOSSARY.md`). It returns an undici `Agent`. Don't add a separate module or a
   `filterAddresses` option: the policy already knows `allowHttp`, and it's the one place that
   decides what that flag relaxes. #2 and #3 compose interceptors onto this same dispatcher, so
@@ -56,11 +56,15 @@ until then.
       lookup filter alone misses `https://10.0.0.5/`. Wrap the connector
       (`buildConnector(...)`) so it checks IP-literal hostnames before connecting.
     - Use a clear error message, for example `refused connection to non-public address`.
-- In `src/main.ts`, `setGlobalDispatcher(outbound.createDispatcher())` before
-  `SdkOpenPaymentsGateway.create`. The policy creates, `main.ts` installs: process-global state stays
-  with the process owner. Install it unconditionally, so #2 and #3 apply with `ALLOW_HTTP=true`
+- An opt-in `installGlobalDispatcher` option (default `false`) on `createWalletLogin`,
+  `createOidcHandler` and `startServer`, always on in `packages/server/src/bin.ts`. When set, it
+  calls `setGlobalDispatcher(outbound.createDispatcher())` before `SdkOpenPaymentsGateway.create`.
+  The policy creates, the option installs: process-global state stays opt-in for library users.
+  Install it unconditionally when the option is on, so #2 and #3 apply with `ALLOW_HTTP=true`
   too. Only the address filter is off in that mode, the same as the pre-check today. Keep the
-  previous global dispatcher. Restore it in `close()`, and in the startup-failure path too.
+  previous global dispatcher. Restore it in `close()`, and in the startup-failure path too. The
+  README entry for the option must say that every `fetch` in the process goes through the IP
+  filter, not only the SDK's.
 - Keep the pre-check in `resolveWalletAddress`. It still gives users the friendlier "couldn't
   reach that wallet address" message before any request goes out. The dispatcher is what actually
   enforces the rule.
@@ -69,7 +73,7 @@ Behavior change to document: requests to allowlisted auth servers go through the
 auth server on a private network stops working unless `ALLOW_HTTP=true`. That's intended.
 
 `oidc-provider` makes no outbound requests with static clients (no `jwks_uri` or
-`sector_identifier_uri` in `src/config/clients.ts`), so the process-wide dispatcher only affects
+`sector_identifier_uri` in `packages/oidc/src/clients.ts`), so the process-wide dispatcher only affects
 Open Payments calls today.
 
 ## Tests
@@ -148,7 +152,7 @@ request comes from a browser (`Accept: text/html`), and the SDK always sends
   for each, and nothing reaches the redirect target. Have the target be a second server that
   records hits. Through the SDK, ky retries refused GETs (see #1), so the redirecting server may
   see up to 3 hits. The target must still see 0.
-- Through the Open Payments gateway (`src/wallet/open-payments-gateway.ts`, see `GLOSSARY.md`),
+- Through the Open Payments gateway (`packages/wallet-login/src/open-payments-gateway.ts`, see `GLOSSARY.md`),
   in a file that installs the dispatcher globally (see the test notes in #1): add an option to
   the fake to redirect the wallet address GET, and another to redirect the grant request.
   `fetchWalletAddress()` returns `not_found` for the first and `requestGrant()` returns
@@ -199,7 +203,7 @@ Two more things make this harder than it looks. A probe during review confirmed 
 ## What to build
 
 - New env var `OUTBOUND_MAX_RESPONSE_BYTES`: an integer, default `65536`, between `1024` and
-  `10485760`. Parse it with the existing `integer()` helper in `src/config/env.ts` and add it to
+  `10485760`. Parse it with the existing `integer()` helper in `packages/server/src/env.ts` and add it to
   `Config`.
 - Add an interceptor to the dispatcher from #1, composed alongside #2's:
   - If `Content-Length` is over the limit, fail at `onResponseStart`.
@@ -211,7 +215,7 @@ Two more things make this harder than it looks. A probe during review confirmed 
   - Set a deadline of `OUTBOUND_TIMEOUT_MS` from dispatch until the body is complete, and abort
     when it expires. This bounds each attempt, body included.
 - Bound the whole call as well, in `SdkOpenPaymentsGateway`
-  (`src/wallet/open-payments-gateway.ts`). Wrap each SDK call (`walletAddress.get`,
+  (`packages/wallet-login/src/open-payments-gateway.ts`). Wrap each SDK call (`walletAddress.get`,
   `grant.request`, `grant.continue`, `token.revoke`) in a helper that rejects after
   `OUTBOUND_TIMEOUT_MS`, and map that rejection to the same kind the call's other failures
   already get (`not_found`, `rejected`, or `revokeError`). The user then waits at most `OUTBOUND_TIMEOUT_MS` per step, whatever ky does with
@@ -264,13 +268,13 @@ Labels: enhancement
 
 ## Why
 
-`RateLimiter` (`src/http/rate-limit.ts`) keeps its counters in memory, so the limit applies per
+`RateLimiter` (`packages/oidc/src/rate-limit.ts`) keeps its counters in memory, so the limit applies per
 replica: N replicas allow about N times `RATE_LIMIT_PER_MINUTE`. All other state already lives in
 Postgres, so the limit should too.
 
 ## What to build
 
-- Migration version 2 in `src/db/migrate.ts`, one statement per entry, because PGlite rejects
+- Migration version 2 in `packages/wallet-login/src/migrations.ts`, one statement per entry, because PGlite rejects
   multi-statement strings:
   - `CREATE TABLE rate_limits (key text NOT NULL, window_start timestamptz NOT NULL, count int NOT NULL, PRIMARY KEY (key, window_start))`
   - `CREATE INDEX rate_limits_window_start ON rate_limits (window_start)`
@@ -287,14 +291,14 @@ Postgres, so the limit should too.
     cookie key rotates, counts reset for a minute, which is fine.
   - Keep the `limitPerMinute` validation from the current constructor.
 - Remove the in-memory implementation. Nothing else needs it once tests use PGlite.
-- `src/http/app.ts`: `isRateLimited` becomes async, and the two call sites `await` it. It still
+- `packages/oidc/src/handler.ts`: `isRateLimited` becomes async, and the two call sites `await` it. It still
   runs before any body read or wallet work. If the database query throws, log
   `rate_limit.failed` with the error message only and answer 503 using the existing error page.
   In other words, fail closed. A login can't work without the database anyway.
-- `src/db/cleanup.ts`: `deleteExpired` also runs
+- `packages/oidc/src/migrations.ts and packages/wallet-login/src/pending-login-store.ts`: `deleteExpired` also runs
   `DELETE FROM rate_limits WHERE window_start < date_trunc('minute', now())` and returns a
   `rateLimits` count. Its log line (`cleanup.done`) picks the count up automatically.
-- `src/main.ts` and `test/support/test-app.ts`: build the new limiter with the app's `db`.
+- `packages/oidc/src/handler.ts` and `test/support/test-app.ts`: build the new limiter with the app's `db`.
 
 ## Tests
 
@@ -336,7 +340,7 @@ Labels: documentation
 Today the only supported auth server is the Interledger test wallet
 (`AUTH_SERVER_ALLOWLIST` defaults to `https://auth.interledger-test.dev`). Before strangers can
 sign in with real wallets, we need to know which production Open Payments wallets accept what
-the provider sends (`requestGrant` in `src/wallet/open-payments-gateway.ts`): a grant request with
+the provider sends (`requestGrant` in `packages/wallet-login/src/open-payments-gateway.ts`): a grant request with
 `subject.sub_ids` (format `uri`) and `interact.start: ["redirect"]`, and a continuation that
 returns the verified `subject`.
 

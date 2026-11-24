@@ -7,11 +7,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 import { generateJwks } from "../src/generate-jwks.ts";
-import { main } from "../src/main.ts";
+import { runFromEnv } from "../src/bin.ts";
 import { createTestDb } from "../../../test/support/db.ts";
 
-test("main fails fast on bad config, listing the missing vars", async () => {
-  await assert.rejects(main({}), (err: Error) => {
+test("runFromEnv fails fast on bad config, listing the missing vars", async () => {
+  await assert.rejects(runFromEnv({}), (err: Error) => {
     for (const name of [
       "ISSUER",
       "DATABASE_URL",
@@ -26,9 +26,9 @@ test("main fails fast on bad config, listing the missing vars", async () => {
   });
 });
 
-test("main rejects a non-root issuer before touching anything", async () => {
+test("runFromEnv rejects a non-root issuer before touching anything", async () => {
   await assert.rejects(
-    main({
+    runFromEnv({
       ISSUER: "https://id.example.com/op",
       DATABASE_URL: "postgres://127.0.0.1:1/none",
       OP_WALLET_ADDRESS: "https://wallet.example.com/provider",
@@ -40,7 +40,7 @@ test("main rejects a non-root issuer before touching anything", async () => {
   );
 });
 
-test("main serves requests and close() is idempotent", async (t) => {
+test("runFromEnv serves requests and close() is idempotent", async (t) => {
   const dir = mkdtempSync(join(tmpdir(), "main-test-"));
   t.after(() => rmSync(dir, { recursive: true, force: true }));
   writeFileSync(join(dir, "jwks.json"), JSON.stringify(generateJwks({})));
@@ -59,15 +59,14 @@ test("main serves requests and close() is idempotent", async (t) => {
     generateKeyPairSync("ed25519").privateKey.export({ type: "pkcs8", format: "pem" }),
   );
 
-  // Find a free port; main() takes a fixed one.
+  // Find a free port; runFromEnv() takes a fixed one.
   const probe = createServer();
   await new Promise<void>((resolve) => probe.listen(0, "127.0.0.1", resolve));
   const port = (probe.address() as AddressInfo).port;
   await new Promise<void>((resolve) => probe.close(() => resolve()));
 
   const db = await createTestDb();
-  let created = 0;
-  const running = await main(
+  const running = await runFromEnv(
     {
       ISSUER: `http://127.0.0.1:${port}`,
       PORT: String(port),
@@ -80,19 +79,13 @@ test("main serves requests and close() is idempotent", async (t) => {
       COOKIE_KEYS: "test-cookie-key",
       TRUST_PROXY: "false",
     },
-    {
-      createDb: () => {
-        created += 1;
-        return db;
-      },
-    },
+    { database: db },
   );
   let closed = false;
   t.after(async () => {
     if (!closed) await running.close();
   });
 
-  assert.equal(created, 1);
   const base = `http://127.0.0.1:${port}`;
   assert.equal(await (await fetch(`${base}/healthz`)).text(), "ok");
   assert.equal((await fetch(`${base}/readyz`)).status, 200);
@@ -103,4 +96,25 @@ test("main serves requests and close() is idempotent", async (t) => {
   await running.close();
   closed = true;
   await assert.rejects(fetch(`${base}/healthz`));
+});
+
+test("runFromEnv names an unreadable private key file", async (t) => {
+  const dir = mkdtempSync(join(tmpdir(), "bin-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  writeFileSync(join(dir, "jwks.json"), JSON.stringify(generateJwks({})));
+  writeFileSync(join(dir, "clients.json"), "[]");
+  const missing = join(dir, "missing.pem");
+  await assert.rejects(
+    runFromEnv({
+      ISSUER: "https://id.example.com",
+      DATABASE_URL: "postgres://127.0.0.1:1/none",
+      OP_WALLET_ADDRESS: "https://wallet.example.com/provider",
+      OP_KEY_ID: "k",
+      OP_PRIVATE_KEY_PATH: missing,
+      CLIENTS_FILE: join(dir, "clients.json"),
+      JWKS_FILE: join(dir, "jwks.json"),
+      COOKIE_KEYS: "a",
+    }),
+    new Error(`OP_PRIVATE_KEY_PATH ${JSON.stringify(missing)} could not be read (ENOENT)`),
+  );
 });

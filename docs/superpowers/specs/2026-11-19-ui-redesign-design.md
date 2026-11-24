@@ -102,7 +102,7 @@ Screens:
 
 The app name: show the client's optional `client_name` if set, otherwise its `client_id`.
 `clients.json` gains an optional `client_name` field (non-empty string if present), validated
-in `src/config/clients.ts` like the other fields, documented in the README and added to
+in `packages/oidc/src/clients.ts` like the other fields, documented in the README and added to
 `config/clients.example.json`. oidc-provider already understands `client_name` as standard
 client metadata. When the client isn't known (possible on the logout pages), the copy drops the
 app name rather than showing a blank.
@@ -139,7 +139,7 @@ the app name appearing (escaped) on the sign-in page.
 
 ## Calls made by me, not the user
 
-- Dropping React entirely and keeping template-string rendering in `src/http/views.ts`.
+- Dropping React entirely and keeping template-string rendering in `packages/oidc/src/views.ts`.
 - `client_name` support in `clients.json`.
 - Text wordmark instead of the logo; system fonts; light only.
 - The sample client's claims table, readable times, and the added raw ID token section.
