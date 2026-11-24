@@ -59,7 +59,7 @@ describe("generate-jwks CLI", () => {
   test("prints JSON to stdout that readJwksFile accepts", (t) => {
     const out = execFileSync(
       "node",
-      ["--conditions=source", "packages/server/src/generate-jwks.ts", "--ec"],
+      ["--conditions=@open-payments-oidc/source", "packages/server/src/generate-jwks.ts", "--ec"],
       { encoding: "utf8" },
     );
     const parsed = JSON.parse(out) as { keys: unknown[] };
@@ -71,7 +71,11 @@ describe("generate-jwks CLI", () => {
     assert.throws(() =>
       execFileSync(
         "node",
-        ["--conditions=source", "packages/server/src/generate-jwks.ts", "--bogus"],
+        [
+          "--conditions=@open-payments-oidc/source",
+          "packages/server/src/generate-jwks.ts",
+          "--bogus",
+        ],
         { stdio: "pipe" },
       ),
     );

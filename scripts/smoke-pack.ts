@@ -90,9 +90,9 @@ function run(dir: string, code: string): string {
   return sh("node", ["--input-type=module", "-e", code], dir);
 }
 
-try {
+const tarballs: Record<string, string> = {};
+await check("build and pack the three packages", () => {
   sh("pnpm", ["-r", "build"], root);
-  const tarballs: Record<string, string> = {};
   for (const name of names) {
     sh("pnpm", ["pack", "--pack-destination", tarDir], join(root, "packages", name));
   }
@@ -102,6 +102,10 @@ try {
     tarballs[name] = join(tarDir, file);
   }
   for (const name of names) assert(tarballs[name], `no tarball for ${name}`);
+});
+
+try {
+  if (failures.length > 0) throw new Error("no tarballs to check");
   const tar = (n: (typeof names)[number]): string => tarballs[n] as string;
 
   await check("wallet-only: imports, no oidc-provider installed", () => {
@@ -133,6 +137,23 @@ try {
          const o = await import("@open-payments-oidc/oidc");
          const s = await import("@open-payments-oidc/server");
          console.log(typeof w.createWalletLogin, typeof o.createOidcHandler, typeof s.startServer);`,
+      );
+      assert(out.trim() === "function function function", `got: ${out.trim()}`);
+    });
+
+    await check("full: a consumer passing --conditions=source still resolves dist", () => {
+      const out = sh(
+        "node",
+        [
+          "--conditions=source",
+          "--input-type=module",
+          "-e",
+          `const w = await import("@open-payments-oidc/wallet-login");
+           const o = await import("@open-payments-oidc/oidc");
+           const s = await import("@open-payments-oidc/server");
+           console.log(typeof w.createWalletLogin, typeof o.createOidcHandler, typeof s.startServer);`,
+        ],
+        full,
       );
       assert(out.trim() === "function function function", `got: ${out.trim()}`);
     });
@@ -194,7 +215,14 @@ try {
     );
     writeFileSync(join(dir, "index.ts"), CONSUMER);
     sh("npx", ["tsc", "--noEmit", "-p", "tsconfig.json"], dir);
+    // A consumer that sets the generic "source" condition must still land on the published types.
+    const withCondition = JSON.parse(readFileSync(join(dir, "tsconfig.json"), "utf8"));
+    withCondition.compilerOptions.customConditions = ["source"];
+    writeFileSync(join(dir, "tsconfig.cond.json"), JSON.stringify(withCondition));
+    sh("npx", ["tsc", "--noEmit", "-p", "tsconfig.cond.json"], dir);
   });
+} catch (error) {
+  if (failures.length === 0) failures.push(`unexpected: ${(error as Error).message}`);
 } finally {
   if (failures.length === 0) rmSync(work, { recursive: true, force: true });
   else console.log(`scratch dir kept at ${work}`);

@@ -9,14 +9,14 @@
     "node": ">=24"
   },
   "scripts": {
-    "start": "node --conditions=source packages/server/src/bin.ts",
+    "start": "node --conditions=@open-payments-oidc/source packages/server/src/bin.ts",
     "format": "prettier --write .",
-    "test": "node --conditions=source --test 'packages/*/test/**/*.test.ts' 'test/**/*.test.ts'",
+    "test": "node --conditions=@open-payments-oidc/source --test 'packages/*/test/**/*.test.ts' 'test/**/*.test.ts'",
     "typecheck": "tsc --noEmit",
-    "generate-jwks": "node --conditions=source packages/server/src/generate-jwks.ts",
+    "generate-jwks": "node --conditions=@open-payments-oidc/source packages/server/src/generate-jwks.ts",
     "sample-client": "node examples/sample-client.ts",
     "build": "pnpm -r build",
-    "smoke": "node --conditions=source scripts/smoke-pack.ts"
+    "smoke": "node --conditions=@open-payments-oidc/source scripts/smoke-pack.ts"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.16",

@@ -38,10 +38,10 @@ that user can read the files (for example `chmod 644`, or `chown 1000`). All of 
 gitignored; only `config/clients.example.json` is committed.
 
 Without Node on the host you can generate the JWKS with the image instead:
-`docker compose run --rm --no-deps oidc node --conditions=source packages/server/src/generate-jwks.ts > config/jwks.json`.
+`docker compose run --rm --no-deps oidc node --conditions=@open-payments-oidc/source packages/server/src/generate-jwks.ts > config/jwks.json`.
 
 To run without compose: `pnpm install --prod --filter @open-payments-oidc/server...`, set the environment, then `pnpm start`
-(`node --conditions=source packages/server/src/bin.ts`, Node 24 or later).
+(`node --conditions=@open-payments-oidc/source packages/server/src/bin.ts`, Node 24 or later).
 
 Tagged releases are also published as a prebuilt image for amd64 and arm64,
 `ghcr.io/cozminu/open-payments-oidc:<version>`. To use it with compose, replace `build: .` with
